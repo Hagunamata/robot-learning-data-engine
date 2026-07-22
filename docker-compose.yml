@@ -1,22 +1,35 @@
-# Robot-Learning Data Engine — service topology (M0 SKELETON).
+# Robot-Learning Data Engine — service topology.
 #
-# This file names the intended services and their wiring so the shape of the stack
-# is legible from day one. Service bodies (images, build contexts, volumes, env) are
-# filled in per milestone — see docs/01-conception.md §11. Nothing here is runnable
-# yet; `make up` prints an M0 stub message.
+# Postgres (the catalog) is live as of M5; Airflow/ELK/Kibana are wired in M6 (dashboard)
+# and are named here as commented placeholders so the shape of the stack is legible.
+# See docs/01-conception.md §3. Deliberately NO Kafka — sources are pull-based files (§6).
 #
-# Deliberately NO Kafka service — sources are pull-based files, not live streams
-# (see docs/01-conception.md §6).
+# `make demo` runs the pipeline directly and does not require this stack; it only needs
+# Postgres if you choose the postgres catalog backend (make demo CATALOG=postgres).
 
-# services:
-#   postgres:        # catalog schema; init from ./postgres/init            [M5]
-#   airflow:         # LocalExecutor; DAG from ./airflow/dags               [M5]
-#   spark:           # local mode; jobs from ./spark/jobs                   [M3]
-#   elasticsearch:   # ELK — log store                                     [M2+]
-#   logstash:        # ships structured stdout; pipeline in ./elk/logstash [M2+]
-#   kibana:          # log/quality views (OR replaced by a Streamlit svc)  [M6, DECISION]
-#   # dashboard:     # Streamlit alternative to Kibana                     [M6, DECISION]
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-robot_learning}
+      POSTGRES_USER: ${POSTGRES_USER:-rlde}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro   # applies catalog schema on first boot
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rlde} -d ${POSTGRES_DB:-robot_learning}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-# volumes:
-#   pg-data:
-#   elk-data:
+#   airflow:         # LocalExecutor; DAG from ./airflow/dags                 [M6]
+#   spark:           # local mode; jobs from ./spark/jobs                     [M6]
+#   elasticsearch:   # ELK — log store                                       [M6]
+#   logstash:        # ships structured stdout; pipeline in ./elk/logstash   [M6]
+#   kibana:          # log/quality views (OR a Streamlit svc)  [M6, DECISION] #
+
+volumes:
+  pg-data:

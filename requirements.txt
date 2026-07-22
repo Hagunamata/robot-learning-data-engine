@@ -12,6 +12,9 @@ numpy             # M4 — signal-gate metric core (jerk / outlier / calibration
 # --- dev/test ---
 pytest            # unit/smoke tests (`make test`)
 
+# --- catalog: postgres backend (the 'sqlite' backend needs nothing extra) ---
+# psycopg[binary] # M5 — 'postgres' catalog backend. Install for the Docker/Ubuntu run.
+
 # --- signal-gate scale engine (needs Java) ---
 # pyspark         # M4/M6 — 'spark' engine for signal gates at scale. The 'local'
 #                 #         (pyarrow+numpy) engine needs neither Java nor this.

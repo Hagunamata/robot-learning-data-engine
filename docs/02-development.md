@@ -281,3 +281,73 @@ make validate ENGINE=local                # dev/CI without a JVM
 make validate SOURCE=droid-slice          # scale source (M6)
 python -m ingest --source droid-100 --schema-only   # stop after the M3 schema gate
 ```
+
+---
+
+## M5 — Synthetic augmenter + catalog + `make demo`
+
+### What was built
+
+| File | Role |
+|------|------|
+| `data_generator/augment.py` | Mints smooth, in-distribution LeRobot v3.0 episodes for under-represented tasks. |
+| `catalog/record.py` | `build_record()` + `compute_task_distribution()` + robust `read_task_map()`. |
+| `catalog/writer.py` | `CatalogWriter` — **postgres** (psycopg) and **sqlite** (stdlib) backends. |
+| `pipeline.py` | `run_pipeline()` orchestrator = `make demo`; + `merge_datasets()`. |
+| `airflow/dags/robot_learning_dag.py` | Same stage callables wired as Airflow tasks. |
+| `docker-compose.yml` | Live Postgres service (init from `postgres/init/`). |
+| `tests/{test_catalog,test_augment,test_pipeline}.py` | Catalog, augmenter, and full end-to-end tests. |
+
+### Design notes / decisions
+
+- **Catalog backend is pluggable** (same spirit as the gate engines): `postgres` for the
+  stack, `sqlite` for dev/CI so `make demo` runs with no server. Same columns
+  (CLAUDE_CODE_BRIEF.md §6.3); sqlite stores `task_distribution` as JSON text, postgres
+  as JSONB.
+- **`tasks.parquet` schema varies.** Real v3.0 `lerobot/droid_100` stores the task string
+  as the pandas index (`__index_level_0__`) with a `task_index` column; fixtures use a
+  `task` column. `read_task_map()` handles both.
+- **Synthetic episodes go through the SAME gates.** The augmenter writes a normal raw
+  dataset; the pipeline runs it through schema + signal gates and curates only passing
+  synthetic episodes — no laxer path. They are procedurally smooth and drawn within the
+  calibration's action range, so they clear the gates; the goal is task-balance, not
+  imitation. Labelled synthetic in the catalog notes.
+- **`make demo` runs the pipeline directly** (portable, no Airflow/JVM needed). The DAG
+  wraps the identical callables so the Airflow run and `make demo` execute the same logic.
+- **Schema union on merge.** Real DROID parquet carries `next.reward`/`next.done`/`index`
+  columns synthetic episodes lack; the augmented dataset unions schemas (null-fill).
+
+### What was verified on Windows (dev machine)
+
+- `make test` — **30 passed** (adds catalog, augmenter, and a full end-to-end pipeline
+  test on fixtures).
+- **Full `make demo` on real `droid_100`** (local engine, sqlite catalog, scratch
+  data-root): acquire (skipped, data staged) → validate 94/100 → catalog **v0.1.0-droid-100**
+  (94 ep / 31,052 fr / 0.94 / real) → augment **20** synthetic episodes across 10
+  under-represented tasks → gate + curate synthetic → merge → catalog
+  **v0.2.0-droid-100-aug** (114 ep / 34,829 fr / 0.95 / real+synthetic) → raw evicted.
+  Two catalogued versions with real lineage + license — the v1 DoD.
+
+### Verify on Ubuntu (end-of-phase checklist)
+
+```bash
+# Local, no server/JVM — full pipeline + two catalog rows in sqlite:
+make demo ENGINE=local CATALOG=sqlite
+sqlite3 data/catalog.db "SELECT dataset_version, episode_count, gate_pass_rate, notes FROM dataset_version;"
+
+# With the stack — Postgres catalog + Spark gates:
+make up                                   # starts Postgres; schema applied from postgres/init
+make demo ENGINE=spark CATALOG=postgres   # needs: pip install pyspark psycopg[binary]
+psql "$POSTGRES_DSN" -c "SELECT dataset_version, episode_count, task_distribution FROM catalog.dataset_version;"
+```
+
+**Still to verify on Ubuntu:** the `postgres` catalog backend against a live DB, the
+Airflow DAG execution end-to-end, and (M6) the scale run + dashboard.
+
+### `make demo` interface
+
+```
+make demo                                  # spark engine, postgres catalog (stack up)
+make demo ENGINE=local CATALOG=sqlite      # fully local, no server/JVM
+python -m pipeline --source droid-100 --engine local --catalog-backend sqlite --no-augment
+```
