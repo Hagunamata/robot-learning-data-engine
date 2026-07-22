@@ -3,7 +3,13 @@
 # M0: targets are stubs. Each is implemented in its milestone (see docs/01-conception.md §11).
 
 .DEFAULT_GOAL := help
-.PHONY: help up down seed demo ingest validate report
+.PHONY: help up down seed demo ingest validate report test
+
+# Overridable: `make ingest SOURCE=droid-slice` or `make ingest DRY_RUN=1`
+SOURCE  ?= droid-100
+PYTHON  ?= python
+DRY_RUN ?=
+_DRY := $(if $(DRY_RUN),--dry-run,)
 
 help:  ## Show this help
 	@echo "Robot-Learning Data Engine — available targets:"
@@ -11,9 +17,11 @@ help:  ## Show this help
 	@echo "  make down      Tear down the stack"
 	@echo "  make seed      Initialize catalog schema + load committed sample episodes"
 	@echo "  make demo      Run the full pipeline end-to-end on DROID-100"
-	@echo "  make ingest    Acquire the dev source (storage guard enforced)  [M2]"
+	@echo "  make ingest    Acquire a source under the storage guard          [M2]"
+	@echo "                   (SOURCE=droid-100 default; DRY_RUN=1 to plan only)"
 	@echo "  make validate  Run schema + signal quality gates                [M3/M4]"
 	@echo "  make report    Wire/refresh the quality dashboard               [M6]"
+	@echo "  make test      Run the unit/smoke tests"
 
 up:  ## Bring up all containers  [M2+]
 	@echo "[M0 stub] docker compose up -d  — not yet implemented"
@@ -27,11 +35,14 @@ seed:  ## Init catalog schema + load sample episodes  [M5]
 demo:  ## Full pipeline on DROID-100  [M5]
 	@echo "[M0 stub] demo — not yet implemented"
 
-ingest:  ## Selective acquisition of the dev source  [M2]
-	@echo "[M0 stub] ingest — not yet implemented"
+ingest:  ## Selective acquisition of a source under the storage guard  [M2]
+	$(PYTHON) -m acquisition --source $(SOURCE) $(_DRY)
 
 validate:  ## Schema + signal quality gates  [M3/M4]
 	@echo "[M0 stub] validate — not yet implemented"
 
 report:  ## Refresh the quality dashboard  [M6]
 	@echo "[M0 stub] report — not yet implemented"
+
+test:  ## Run the unit/smoke tests
+	$(PYTHON) -m pytest -q

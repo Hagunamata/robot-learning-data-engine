@@ -5,13 +5,18 @@
 # human first (see CLAUDE_CODE_BRIEF.md §7). Listed here as commented intent only.
 
 pyyaml            # config parsing (config/*.yaml)
+huggingface_hub   # M2 — selective, file-granular acquisition from the Hub
+
+# --- dev/test ---
+pytest            # unit/smoke tests (`make test`)
 
 # --- added per milestone ---
-# huggingface_hub  # M2 — selective/streamed acquisition
-# datasets         # M2 — streaming dataset access
-# pyarrow          # M3 — Parquet episode I/O
+# pyarrow          # M3 — Parquet episode I/O (read meta/episodes, split episodes)
 # pyspark          # M3/M4 — batch validation (local mode)
 # psycopg[binary]  # M5 — catalog writer -> Postgres
 # apache-airflow   # runs in its own container; not a local dep
 # streamlit        # M6 — only if the dashboard DECISION lands on Streamlit
-# pytest           # per-module smoke tests
+#
+# NOTE: `datasets` streaming is intentionally NOT used — v3.0 datasets aggregate many
+# episodes per file, so we pull whole files via huggingface_hub for real byte-level
+# guard accounting (see docs/02-development.md M2).
