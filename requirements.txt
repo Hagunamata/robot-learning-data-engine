@@ -6,13 +6,17 @@
 
 pyyaml            # config parsing (config/*.yaml)
 huggingface_hub   # M2 — selective, file-granular acquisition from the Hub
-pyarrow           # M3 — Parquet schema gate (read info.json features + data columns)
+pyarrow           # M3 — Parquet schema gate; M4 curation (filter/write parquet)
+numpy             # M4 — signal-gate metric core (jerk / outlier / calibration)
 
 # --- dev/test ---
 pytest            # unit/smoke tests (`make test`)
 
-# --- added per milestone ---
-# pyspark          # M4 — signal quality gates (jerk/outlier/missing-frame), local mode
+# --- signal-gate scale engine (needs Java) ---
+# pyspark         # M4/M6 — 'spark' engine for signal gates at scale. The 'local'
+#                 #         (pyarrow+numpy) engine needs neither Java nor this.
+#                 #         Install for the Ubuntu/Docker run: pip install pyspark
+# pandas          #       — pulled in by pyspark; used by applyInPandas in run_spark
 # psycopg[binary]  # M5 — catalog writer -> Postgres
 # apache-airflow   # runs in its own container; not a local dep
 # streamlit        # M6 — only if the dashboard DECISION lands on Streamlit

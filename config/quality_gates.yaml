@@ -21,9 +21,14 @@ schema:
     - observation.images.wrist_image_left
 
 signal:
-  calibrate_from: droid-100       # profiling pass sets thresholds ~ mean + 6σ
-  jerk_zscore_max: 6.0            # DRAFT until calibrated
-  action_outlier_zscore_max: 5.0  # DRAFT
+  # Robust percentile + anomalous-frame-fraction gate (M4 decision A; see
+  # docs/02-development.md M4). Naive mean+kσ z-scores were too aggressive on real
+  # DROID jerk (99/100 failed) because jerk is near-zero-peaked. Instead: calibrate a
+  # per-signal frame-score threshold at `anomaly_percentile` over `calibrate_from`,
+  # then fail an episode only if >`max_anomalous_frame_ratio` of its frames exceed it.
+  calibrate_from: droid-100       # source profiled to set the score thresholds
+  anomaly_percentile: 99.9        # DRAFT — per-frame score threshold percentile
+  max_anomalous_frame_ratio: 0.01 # DRAFT — fail if >1% of frames are anomalous
   max_missing_frame_ratio: 0.02
 
 annotation:

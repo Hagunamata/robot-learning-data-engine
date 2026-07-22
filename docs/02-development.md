@@ -185,3 +185,99 @@ make validate                    # schema-gate the dev source (droid-100)
 make validate SOURCE=droid-slice # schema-gate the scale source
 python -m ingest --source droid-100   # same, directly
 ```
+
+---
+
+## M4 — Signal quality gates + curate + evict (process-and-evict)
+
+### What was built
+
+| File | Role |
+|------|------|
+| `spark/jobs/signal_gates.py` | Pure numpy metric core + `run_local` (pyarrow) and `run_spark` engines + calibration. |
+| `ingest/curate.py` | `curate_passing()` (filter to passing episodes) + `run_validation()` orchestrator (schema → calibrate → gate → curate → evict → metrics). |
+| `ingest/config.py` | `SignalGates` reworked for the decision-A gate. |
+| `tests/test_signal_gates.py` | Pure-core, local-engine, curation, and full end-to-end tests. |
+
+### Decision record — the gate had to be redesigned twice against real data
+
+The naive gates failed on real `droid_100`; both attempts and the fix are recorded here
+because the reasoning is the point:
+
+1. **Within-episode z-score → rejected.** Episodes have long still segments, so the
+   per-episode spread collapses; jerk z-scores hit ~10⁷ and **100/100** episodes failed.
+2. **Global mean+6σ z-score → rejected.** Robot jerk is near-zero-peaked, so its global
+   σ is tiny (~0.001) and normal motion reads as ~14σ; still **99/100** failed.
+3. **Decision A (shipped): robust percentile + anomalous-frame fraction.** Calibrate
+   per-dim robust center/scale (median / MAD) over `calibrate_from`, set a per-signal
+   frame-score threshold at `anomaly_percentile` (99.9), and fail an episode only if the
+   **fraction** of frames exceeding it is above `max_anomalous_frame_ratio` (1%). A
+   single sharp frame no longer kills a long episode; concentrated anomalies do.
+
+> Quality-gate thresholds are a §7 human decision. Option A was chosen with the user;
+> the values (99.9 pctl, 1% fraction) are DRAFT and open to tuning on the Ubuntu run.
+
+### Engines (why two)
+
+The per-episode metric maths is a **pure numpy core**; two engines feed it identical
+per-episode arrays:
+- **`spark`** (default) — `applyInPandas` groupBy `episode_index`. The scale engine
+  (DROID slice at M6). Needs Java + pyspark — **not runnable on the Windows dev box**,
+  verified on Ubuntu.
+- **`local`** — pyarrow + numpy, single process, for the tiny dev source and CI where a
+  JVM is pure overhead. Same core ⇒ identical results.
+
+### Curation + eviction (the headline loop)
+
+`run_validation` closes process-and-evict: passing episodes are written to
+`data/curated/<id>/` (data parquet filtered by `episode_index`, `meta/info.json` counts
+patched, `tasks`/`stats`/`episodes` meta copied, videos copied as-is), failing episodes
+are recorded in `data/quarantine/<id>/episode_rejects.json`, and the raw copy is
+**evicted** via the storage guard. Per-batch metrics (`gate_pass_rate`, counts,
+`raw_bytes_evicted`) are logged for the dashboard/catalog.
+
+> v3.0 simplification: videos are copied whole, not re-segmented to drop failed
+> episodes' footage (that needs ffmpeg). The curated `meta` records which episodes are
+> valid. Production would re-segment. Also: curation writes curated *before* evicting
+> raw, so a single very large file transiently needs both — fine at dev scale; at true
+> scale the guard would stream-and-evict per file.
+
+### What was verified on Windows (dev machine, local engine)
+
+- `make test` — **23 passed** (pure metrics, calibration shape, local engine, curation,
+  full end-to-end).
+- **Real-data calibration + gate** on `droid_100` (32,212 frames): calibrated
+  thresholds jerk≈10206, action≈8.24; **94/100 episodes pass** (6 fail: 5
+  action-anomalous, 1 jerk-anomalous) — a realistic yield.
+- **Full loop on real data** (scratch data-root): schema pass → calibrate → gate 94/100
+  → curate 94 episodes / 31,052 frames → **raw evicted** (raw dir gone) → 6 rejects
+  logged → calibration artifact persisted → `batch_metrics` emitted.
+
+### Verify on Ubuntu (end-of-phase checklist)
+
+```bash
+# Local engine (no Java) — full loop on the dev source:
+make validate SOURCE=droid-100 ENGINE=local
+#   expect: schema_result passed; calibration_built n_frames≈32212;
+#           signal_gates_done gate_pass_rate≈0.94; evicted_raw; batch_metrics.
+#   after:  data/curated/droid-100 present; data/raw/droid-100 gone;
+#           data/quarantine/droid-100/episode_rejects.json lists ~6 episodes.
+
+# Spark engine (the scale showcase) — SAME result path, on the JVM:
+pip install pyspark
+make validate SOURCE=droid-100 ENGINE=spark
+#   expect identical verdicts (shared pure core). Confirms the applyInPandas job.
+```
+
+**Still to verify on Ubuntu:** the `spark` engine end-to-end (Windows has no JVM — the
+job is written against the same tested core but its Spark wrapper is unexercised here),
+and the M6 scale run on `droid-slice`.
+
+### `make validate` interface (M3/M4)
+
+```
+make validate                             # dev source, spark engine (Ubuntu)
+make validate ENGINE=local                # dev/CI without a JVM
+make validate SOURCE=droid-slice          # scale source (M6)
+python -m ingest --source droid-100 --schema-only   # stop after the M3 schema gate
+```

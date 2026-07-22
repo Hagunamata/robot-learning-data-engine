@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Optional
 
 import yaml
 
@@ -32,11 +32,26 @@ class AnnotationGates:
 
 
 @dataclass
+class SignalGates:
+    """Per-episode signal-quality thresholds (M4, decision A). DRAFT until tuned.
+
+    Robust percentile + anomalous-frame-fraction gate: calibrate a per-signal frame
+    score threshold at `anomaly_percentile` over `calibrate_from`, then fail an episode
+    only if the fraction of frames exceeding it is above `max_anomalous_frame_ratio`.
+    """
+
+    calibrate_from: Optional[str] = None       # source id to calibrate thresholds from
+    anomaly_percentile: float = 99.9           # frame-score threshold percentile
+    max_anomalous_frame_ratio: float = 0.01    # fail if >1% of frames are anomalous
+    max_missing_frame_ratio: float = 0.02
+
+
+@dataclass
 class QualityGates:
     schema: SchemaGates
     annotation: AnnotationGates
     on_fail: str = "quarantine"           # quarantine | drop
-    signal: dict[str, Any] = field(default_factory=dict)  # typed in M4
+    signal: SignalGates = field(default_factory=SignalGates)
 
 
 def load_quality_gates(path: str | Path = DEFAULT_GATES_PATH) -> QualityGates:
@@ -44,6 +59,7 @@ def load_quality_gates(path: str | Path = DEFAULT_GATES_PATH) -> QualityGates:
     schema_raw = raw.get("schema", {}) or {}
     annotation_raw = raw.get("annotation", {}) or {}
     policy_raw = raw.get("policy", {}) or {}
+    signal_raw = raw.get("signal", {}) or {}
     return QualityGates(
         schema=SchemaGates(
             detect_codebase_version=schema_raw.get("detect_codebase_version", True),
@@ -55,5 +71,10 @@ def load_quality_gates(path: str | Path = DEFAULT_GATES_PATH) -> QualityGates:
             require_language_instruction=annotation_raw.get("require_language_instruction", True),
         ),
         on_fail=policy_raw.get("on_fail", "quarantine"),
-        signal=raw.get("signal", {}) or {},
+        signal=SignalGates(
+            calibrate_from=signal_raw.get("calibrate_from"),
+            anomaly_percentile=float(signal_raw.get("anomaly_percentile", 99.9)),
+            max_anomalous_frame_ratio=float(signal_raw.get("max_anomalous_frame_ratio", 0.01)),
+            max_missing_frame_ratio=float(signal_raw.get("max_missing_frame_ratio", 0.02)),
+        ),
     )
