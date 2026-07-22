@@ -1,0 +1,32 @@
+# Validation thresholds for the batch quality gates.  (M1 — human-owned values.)
+#
+# Feature keys verified 2026-07-22 against the lerobot/droid_100 v2.0 card:
+#   observation.state (7-d f32), action (7-d f32),
+#   observation.images.{exterior_image_1_left, exterior_image_2_left, wrist_image_left}.
+# NOTE: the language-instruction field in v2.0 droid_100 is `language_instruction`
+# (a string), NOT `task`. The annotation gate below targets that key at M3.
+# Signal thresholds are DRAFT until the M-calibration pass over droid-100.
+# See docs/01-conception.md §4.2/§4.3.
+
+schema:
+  detect_codebase_version: true   # branch v2.0 (flat) vs v3.0 (split keys)
+  required_features:              # v2.0 / droid_100 keys
+    - observation.state
+    - action
+  require_at_least_one_image: true
+  image_keys_any_of:
+    - observation.images.exterior_image_1_left
+    - observation.images.exterior_image_2_left
+    - observation.images.wrist_image_left
+
+signal:
+  calibrate_from: droid-100       # profiling pass sets thresholds ~ mean + 6σ
+  jerk_zscore_max: 6.0            # DRAFT until calibrated
+  action_outlier_zscore_max: 5.0  # DRAFT
+  max_missing_frame_ratio: 0.02
+
+annotation:
+  require_language_instruction: true   # key: `language_instruction` (v2.0 droid_100)
+
+policy:
+  on_fail: quarantine             # keep rejects + reason

@@ -1,0 +1,36 @@
+# Source manifest + storage budget.  (M1 — human-owned values, verified against cards.)
+#
+# Verified 2026-07-22 against the live Hugging Face dataset cards:
+#   - lerobot/droid_100            -> card license: MIT     ; codebase_version: v2.0
+#   - IPEC-COMMUNITY/droid_lerobot -> card license: Apache-2.0; codebase_version: v2.0
+# Per CLAUDE_CODE_BRIEF.md §2.3 we cite the OFFICIAL DROID basis (CC-BY 4.0) as
+# `license` and record each mirror's stated license in `license_mirror_stated`.
+# Neither mirror is non-commercial (no CC-BY-NC flag needed).
+# See docs/01-conception.md §2.
+
+storage_budget_gb: 25             # low on purpose for the scale demo; raise for a full run
+data_root: ./data
+
+sources:
+  - id: droid-100
+    role: dev                     # tiny; used to build & debug the whole pipeline
+    hf_repo: lerobot/droid_100
+    codebase_version: v2.0
+    max_episodes: 100
+    license: CC-BY-4.0            # basis: official DROID release
+    license_mirror_stated: MIT   # verified on lerobot/droid_100 card (2026-07-22)
+    enabled: true
+
+  - id: droid-slice
+    role: scale                   # bounded slice to prove the storage-aware path
+    hf_repo: IPEC-COMMUNITY/droid_lerobot
+    codebase_version: v2.0
+    max_episodes: 5000            # ~90 GB; the 25 GB guard is the real ceiling
+    license: CC-BY-4.0            # basis: official DROID release
+    license_mirror_stated: Apache-2.0  # verified on IPEC-COMMUNITY/droid_lerobot card (2026-07-22)
+    enabled: true
+
+  - id: oxe-component
+    role: future                  # cross-embodiment; leave off for v1
+    hf_repo: <verify a LeRobot OXE mirror when you get here>
+    enabled: false

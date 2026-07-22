@@ -1,0 +1,22 @@
+# Robot-Learning Data Engine — service topology (M0 SKELETON).
+#
+# This file names the intended services and their wiring so the shape of the stack
+# is legible from day one. Service bodies (images, build contexts, volumes, env) are
+# filled in per milestone — see docs/01-conception.md §11. Nothing here is runnable
+# yet; `make up` prints an M0 stub message.
+#
+# Deliberately NO Kafka service — sources are pull-based files, not live streams
+# (see docs/01-conception.md §6).
+
+# services:
+#   postgres:        # catalog schema; init from ./postgres/init            [M5]
+#   airflow:         # LocalExecutor; DAG from ./airflow/dags               [M5]
+#   spark:           # local mode; jobs from ./spark/jobs                   [M3]
+#   elasticsearch:   # ELK — log store                                     [M2+]
+#   logstash:        # ships structured stdout; pipeline in ./elk/logstash [M2+]
+#   kibana:          # log/quality views (OR replaced by a Streamlit svc)  [M6, DECISION]
+#   # dashboard:     # Streamlit alternative to Kibana                     [M6, DECISION]
+
+# volumes:
+#   pg-data:
+#   elk-data:

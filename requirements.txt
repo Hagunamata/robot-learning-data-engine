@@ -1,0 +1,17 @@
+# Python dependencies.
+#
+# M0: intentionally minimal. Concrete pins are added in the milestone that first
+# needs them, and adding any heavyweight dependency is a DECISION to clear with the
+# human first (see CLAUDE_CODE_BRIEF.md §7). Listed here as commented intent only.
+
+pyyaml            # config parsing (config/*.yaml)
+
+# --- added per milestone ---
+# huggingface_hub  # M2 — selective/streamed acquisition
+# datasets         # M2 — streaming dataset access
+# pyarrow          # M3 — Parquet episode I/O
+# pyspark          # M3/M4 — batch validation (local mode)
+# psycopg[binary]  # M5 — catalog writer -> Postgres
+# apache-airflow   # runs in its own container; not a local dep
+# streamlit        # M6 — only if the dashboard DECISION lands on Streamlit
+# pytest           # per-module smoke tests

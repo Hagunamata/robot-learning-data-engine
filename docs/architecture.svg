@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 720" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .box   { fill:#f8fafc; stroke:#334155; stroke-width:1.5; rx:8; }
+      .reuse { fill:#eef2ff; stroke:#4f46e5; stroke-width:1.5; }
+      .side  { fill:#ecfdf5; stroke:#059669; stroke-width:1.5; }
+      .title { font-size:15px; font-weight:600; fill:#0f172a; }
+      .sub   { font-size:11px; fill:#475569; }
+      .flow  { stroke:#334155; stroke-width:1.5; fill:none; marker-end:url(#arrow); }
+      .feed  { stroke:#059669; stroke-width:1.5; fill:none; stroke-dasharray:5 4; marker-end:url(#arrow); }
+      .cap   { font-size:12px; font-weight:600; fill:#1e293b; }
+      .lgd   { font-size:11px; fill:#475569; }
+    </style>
+  </defs>
+
+  <text x="410" y="30" text-anchor="middle" font-size="19" font-weight="700" fill="#0f172a">Robot-Learning Data Engine — batch pipeline</text>
+
+  <!-- Sources -->
+  <rect x="260" y="52" width="300" height="46" rx="8" class="box"/>
+  <text x="410" y="72" text-anchor="middle" class="title">Public sources (Hugging Face Hub)</text>
+  <text x="410" y="89" text-anchor="middle" class="sub">DROID-100 · DROID slice · OXE (later)</text>
+
+  <!-- Storage guard (side) -->
+  <rect x="20" y="118" width="185" height="60" rx="8" class="side"/>
+  <text x="112" y="142" text-anchor="middle" class="title">Storage guard</text>
+  <text x="112" y="160" text-anchor="middle" class="sub">~400 GB cap · process-and-evict</text>
+
+  <!-- Acquisition -->
+  <rect x="260" y="120" width="300" height="56" rx="8" class="box"/>
+  <text x="410" y="143" text-anchor="middle" class="title">Selective acquisition</text>
+  <text x="410" y="161" text-anchor="middle" class="sub">stream/pull only chosen episodes</text>
+
+  <!-- Ingest -->
+  <rect x="260" y="198" width="300" height="56" rx="8" class="box"/>
+  <text x="410" y="221" text-anchor="middle" class="title">Canonical ingest</text>
+  <text x="410" y="239" text-anchor="middle" class="sub">convert to LeRobot format</text>
+
+  <!-- Synthetic (side) -->
+  <rect x="615" y="274" width="185" height="60" rx="8" class="reuse"/>
+  <text x="707" y="298" text-anchor="middle" class="title">Synthetic generator</text>
+  <text x="707" y="316" text-anchor="middle" class="sub">reused · LeRobot episodes</text>
+
+  <!-- Validation -->
+  <rect x="260" y="276" width="300" height="56" rx="8" class="reuse"/>
+  <text x="410" y="299" text-anchor="middle" class="title">Batch validation (Spark)</text>
+  <text x="410" y="317" text-anchor="middle" class="sub">reused · schema, jerk, outliers</text>
+
+  <!-- Curated -->
+  <rect x="260" y="354" width="300" height="56" rx="8" class="box"/>
+  <text x="410" y="377" text-anchor="middle" class="title">Curated dataset</text>
+  <text x="410" y="395" text-anchor="middle" class="sub">versioned · raw copy evicted</text>
+
+  <!-- Catalog -->
+  <rect x="150" y="452" width="240" height="60" rx="8" class="reuse"/>
+  <text x="270" y="476" text-anchor="middle" class="title">Data catalog</text>
+  <text x="270" y="494" text-anchor="middle" class="sub">Postgres · source, license, stats</text>
+
+  <!-- Dashboard -->
+  <rect x="430" y="452" width="240" height="60" rx="8" class="box"/>
+  <text x="550" y="476" text-anchor="middle" class="title">Quality dashboard</text>
+  <text x="550" y="494" text-anchor="middle" class="sub">Kibana / Streamlit — yield, storage</text>
+
+  <!-- flows -->
+  <path class="flow" d="M410,98 L410,120"/>
+  <path class="flow" d="M410,176 L410,198"/>
+  <path class="flow" d="M410,254 L410,276"/>
+  <path class="flow" d="M410,332 L410,354"/>
+  <path class="flow" d="M360,410 L300,452"/>
+  <path class="flow" d="M460,410 L520,452"/>
+
+  <!-- guard <-> acquisition (feedback) -->
+  <path class="flow" d="M205,148 L260,148"/>
+  <path class="feed" d="M410,362 C150,362 112,300 112,182" />
+
+  <!-- synthetic feed into validation -->
+  <path class="feed" d="M615,304 L560,304"/>
+
+  <!-- orchestration band -->
+  <rect x="20" y="556" width="780" height="40" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+  <text x="410" y="581" text-anchor="middle" class="cap">Orchestrated by Airflow · logs to ELK · packaged with Docker Compose + Makefile</text>
+
+  <!-- legend -->
+  <rect x="20" y="624" width="18" height="14" rx="3" class="box"/>
+  <text x="46" y="636" class="lgd">new stage</text>
+  <rect x="140" y="624" width="18" height="14" rx="3" class="reuse"/>
+  <text x="166" y="636" class="lgd">reused from prior project</text>
+  <line x1="340" y1="631" x2="372" y2="631" class="feed"/>
+  <text x="380" y="636" class="lgd">storage-guard feedback / synthetic feed</text>
+  <text x="20" y="662" class="lgd">Note: no Kafka — sources are pull-based files, not live streams (see docs/01-conception.md §6).</text>
+</svg>

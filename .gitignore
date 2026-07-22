@@ -1,0 +1,50 @@
+# --- Datasets: NEVER commit (see CLAUDE_CODE_BRIEF.md §2) ---
+# All acquired/curated/quarantined data is gitignored. Keep only the directory
+# skeleton (.gitkeep) and any small, deliberately-committed sample episodes.
+/data/**
+!/data/
+!/data/.gitkeep
+!/data/**/
+!/data/**/.gitkeep
+
+# Large artifacts / model & dataset caches
+*.parquet
+*.arrow
+*.mp4
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.bin
+*.safetensors
+.cache/
+hf_cache/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# --- Env / secrets ---
+.env
+*.local
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Docker / logs ---
+*.log
+elk-data/
+pg-data/
