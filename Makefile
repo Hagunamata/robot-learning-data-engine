@@ -3,7 +3,7 @@
 # M0: targets are stubs. Each is implemented in its milestone (see docs/01-conception.md §11).
 
 .DEFAULT_GOAL := help
-.PHONY: help up down seed demo ingest validate report test
+.PHONY: help up down seed demo ingest validate report scale test
 
 # Overridable: `make ingest SOURCE=droid-slice` or `make ingest DRY_RUN=1`
 SOURCE  ?= droid-100
@@ -23,7 +23,8 @@ help:  ## Show this help
 	@echo "                   (SOURCE=droid-100 default; DRY_RUN=1 to plan only)"
 	@echo "  make validate  Schema + signal gates + curate + evict            [M3/M4]"
 	@echo "                   (SOURCE=droid-100; ENGINE=spark|local)"
-	@echo "  make report    Wire/refresh the quality dashboard               [M6]"
+	@echo "  make report    Launch the Streamlit data-quality dashboard        [M6]"
+	@echo "  make scale     Synthetic process-and-evict proof (peak<budget<total) [M6]"
 	@echo "  make test      Run the unit/smoke tests"
 
 up:  ## Bring up the stack (Postgres now; Airflow/ELK/Kibana added in M6)
@@ -45,8 +46,11 @@ ingest:  ## Selective acquisition of a source under the storage guard  [M2]
 validate:  ## Full validation: schema + signal gates + curate + evict  [M3/M4]
 	$(PYTHON) -m ingest --source $(SOURCE) --engine $(ENGINE)
 
-report:  ## Refresh the quality dashboard  [M6]
-	@echo "[M0 stub] report — not yet implemented"
+report:  ## Launch the Streamlit data-quality dashboard (reads the catalog)  [M6]
+	$(PYTHON) -m streamlit run dashboard/app.py
+
+scale:  ## Synthetic process-and-evict proof (seeded; measured peak<budget<total)  [M6]
+	$(PYTHON) -m scale --synthetic
 
 test:  ## Run the unit/smoke tests
 	$(PYTHON) -m pytest -q

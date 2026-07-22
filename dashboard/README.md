@@ -1,13 +1,23 @@
-# Quality dashboard — placeholder (decision pending)
+# Quality dashboard — Streamlit (decision resolved)
 
-The dashboard must surface **gate pass-rate**, **task distribution**, and **storage
-used** (disk-used-vs-budget over time).
+**Decision (locked):** **Streamlit**, reading the **catalog** (Postgres/sqlite) directly.
+Kibana is **not** used for these metrics — ELK/Kibana stays for pipeline **logs** only.
 
-**Open DECISION — Kibana vs Streamlit** (see [../docs/01-conception.md](../docs/01-conception.md) §4.8):
+[`app.py`](app.py) shows:
+- **Dataset versions & lineage** — one row per catalogued version (source, license,
+  episode/frame counts, notes).
+- **Gate pass-rate by version** — bar chart.
+- **Task distribution** — per selected version.
+- **Storage: peak concurrent raw vs budget** — from the scale-run manifests
+  (`data/manifest/*.json`), with the measured `peak < budget < total` invariant.
 
-- **Kibana** — maximum continuity with the reused ELK stack; reads from Elasticsearch.
-- **Streamlit** — lighter; reads directly from the Postgres `catalog` schema.
+Run it:
 
-Default is **Kibana** if the human does not choose otherwise. Nothing is built here
-until the decision lands; the chosen artifact (a Kibana export **or** a Streamlit app)
-is added in **M6** (`make report`).
+```bash
+make report                                  # streamlit run dashboard/app.py (sqlite: data/catalog.db)
+RLDE_CATALOG_BACKEND=postgres make report    # read the Postgres catalog instead
+```
+
+Config via env: `RLDE_CATALOG_BACKEND` (`sqlite`|`postgres`), `RLDE_CATALOG_DB`
+(sqlite path), `RLDE_DATA_ROOT` (for manifests), plus the `POSTGRES_*` vars for the
+postgres backend. `pandas` ships with Streamlit, so no extra dependency.

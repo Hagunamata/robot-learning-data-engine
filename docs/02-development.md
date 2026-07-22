@@ -351,3 +351,104 @@ make demo                                  # spark engine, postgres catalog (sta
 make demo ENGINE=local CATALOG=sqlite      # fully local, no server/JVM
 python -m pipeline --source droid-100 --engine local --catalog-backend sqlite --no-augment
 ```
+
+---
+
+## M6 — Scale test (process-and-evict) + dashboard
+
+### The invariant (headline deliverable)
+
+The scale run proves, **measured not narrated**:
+
+    peak concurrent on-disk RAW  <  storage_budget_gb        (bounded working set)
+    total bytes processed        >> storage_budget_gb        (streamed through)
+
+[scale.py](../scale.py) `run_scale()` implements a batched **acquire → gate → curate →
+commit → evict** loop over a source of *units* (a chunk = data file + its videos). The
+five correctness rules and where they live:
+
+| Rule | Where |
+|------|-------|
+| 1. Pre-admission guard (never overshoot) | `raw_used + unit.est ≤ budget×headroom` checked before each fetch; oversized unit refused |
+| 2. Evict only after durable commit | loop order: `_append_curated` → `_quarantine_failures` → `writer.record_version` → manifest write → **then** `guard.evict` |
+| 3. Resumable + idempotent | `data/manifest/<version>.json` (processed unit + episode ids); re-run skips + never re-counts bytes |
+| 4. Quarantine can't leak the budget | reason line + ≤5-frame sample per failure, capped at `budget×0.05` |
+| 5. Peak is measured | raw dir size sampled after every fetch; observed max reported |
+
+The RAW budget is enforced by a `StorageGuard` rooted at `data/raw/<id>` (curated is the
+kept output and grows independently — the budget bounds the transient working set).
+
+### Synthetic proof (reproducible, network-free)
+
+`python -m scale --synthetic` (seeded; `tests/test_scale.py` asserts it):
+
+```
+budget              : 0.625 MB
+peak concurrent raw : 0.314 MB      (measured max of the raw dir)
+total processed     : 2.508 MB      (4.01x budget)
+episodes            : 20 passed / 4 quarantined / 24 total
+INVARIANT HOLDS     : True          (peak < budget  AND  total >> budget)
+```
+
+### Gotchas at scale (for the Ubuntu run)
+
+- **`list_repo_tree(recursive=True)` on a full-corpus mirror hangs** (M2 saw this): a full
+  DROID mirror has thousands of video files and materializing the whole tree is O(all
+  files). Fix in `HfScaleSource`: scope enumeration to the **`data` prefix** and iterate
+  **lazily**; resolve each unit's video paths/sizes from the `video_path` template + a
+  targeted `get_paths_info`, never a recursive video listing. Path templates are read
+  from the dataset's own `info.json`, so it adapts to v2.0 (per-episode) or v3.0.
+- **Curated grows to the full kept corpus** (videos copied whole, not re-segmented — the
+  M4 simplification). That's the *output*, not the raw working set; ensure the disk has
+  room for it (≤ the 500 GB machine budget), separate from the RAW cap.
+- **Calibration must pre-exist.** The slice calibrates from `droid-100`
+  (`calibrate_from`), so run `make demo SOURCE=droid-100` first to produce
+  `data/calibration/droid-100.json`; `run_hf_scale` errors clearly if it's missing.
+
+### Verify on Ubuntu (steps to follow)
+
+```bash
+# 0. Prereqs: repo installed (pip install -r requirements.txt), and for the real run:
+#    pip install pyspark psycopg[binary]        # only if using ENGINE=spark / postgres
+# 1. Produce calibration from the dev source (also seeds the catalog with the real+aug versions):
+make demo SOURCE=droid-100 ENGINE=local CATALOG=sqlite
+
+# 2. Quick guard-trip confirmation on REAL DROID data (bounded to ~60 chunks so it's fast):
+python -m scale --source droid-slice --max-units 60 --engine local --catalog-backend sqlite
+#    Expect a scale_done log with: peak_raw_mb < budget (25 GB), total_processed_mb >> budget,
+#    invariant_holds=true. The run is resumable — re-run to continue; already-pulled
+#    chunks are skipped (idempotent).
+
+# 3. Inspect what was pulled (lineage) and the measured figures:
+cat data/manifest/v0.1.0-droid-slice.json     # processed_units, processed_episodes, peak_raw_bytes, total_processed_bytes
+
+# Full run (no --max-units) streams the whole bounded slice (~tens of GB) through the 25 GB
+# budget. To use the stack instead of local files: --engine spark --catalog-backend postgres (make up first).
+```
+
+**Record for the log:** the three measured figures (peak / budget / total), the pulled
+`processed_episodes` from the manifest, and any non-working issues to resolve. Both the
+synthetic and real runs write to the manifest so the lineage is reproducible.
+
+> Not runnable on the Windows dev box (the slice is ~1.7 TB on the Hub and the working
+> folder is OneDrive-synced) — this is the intended end-of-development Ubuntu check. The
+> synthetic proof above is the machine-independent equivalent.
+
+### Dashboard — Streamlit, reading the catalog (decision locked)
+
+[dashboard/app.py](../dashboard/app.py) reads the **catalog** (sqlite or Postgres) and
+the scale **manifests** directly — Kibana is not used for these metrics (ELK/Kibana
+stays for logs). Panels: dataset versions & lineage, gate pass-rate by version, task
+distribution per version, and **peak concurrent raw vs budget** per scale run (with the
+measured invariant). `pandas` ships with Streamlit, so no extra dependency.
+
+Verified on Windows against a demo catalog (3 versions: real, augmented,
+synthetic-scale) + the synthetic manifest — the storage panel showed
+`peak 0.0003 GB < budget 0.0006 GB < total 0.0023 GB (4.0x)`, `Invariant HOLDS`.
+
+```bash
+make report                                  # streamlit run dashboard/app.py (sqlite default)
+RLDE_CATALOG_BACKEND=postgres make report    # read the Postgres catalog
+```
+Config via env (`RLDE_CATALOG_BACKEND`, `RLDE_CATALOG_DB`, `RLDE_DATA_ROOT`, `POSTGRES_*`).
+The app resolves `data/` relative to its own file, so it works from any launch cwd.

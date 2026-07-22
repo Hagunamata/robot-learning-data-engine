@@ -12,6 +12,8 @@ numpy             # M4 — signal-gate metric core (jerk / outlier / calibration
 # --- dev/test ---
 pytest            # unit/smoke tests (`make test`)
 
+streamlit         # M6 — data-quality dashboard (reads the catalog); ships pandas
+
 # --- catalog: postgres backend (the 'sqlite' backend needs nothing extra) ---
 # psycopg[binary] # M5 — 'postgres' catalog backend. Install for the Docker/Ubuntu run.
 
