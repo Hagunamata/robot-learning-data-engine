@@ -19,7 +19,7 @@ help:  ## Show this help
 	@echo "  make demo      Run the full pipeline end-to-end on DROID-100"
 	@echo "  make ingest    Acquire a source under the storage guard          [M2]"
 	@echo "                   (SOURCE=droid-100 default; DRY_RUN=1 to plan only)"
-	@echo "  make validate  Run schema + signal quality gates                [M3/M4]"
+	@echo "  make validate  Canonical ingest + schema gate (SOURCE=droid-100) [M3]"
 	@echo "  make report    Wire/refresh the quality dashboard               [M6]"
 	@echo "  make test      Run the unit/smoke tests"
 
@@ -38,8 +38,8 @@ demo:  ## Full pipeline on DROID-100  [M5]
 ingest:  ## Selective acquisition of a source under the storage guard  [M2]
 	$(PYTHON) -m acquisition --source $(SOURCE) $(_DRY)
 
-validate:  ## Schema + signal quality gates  [M3/M4]
-	@echo "[M0 stub] validate — not yet implemented"
+validate:  ## Canonical ingest + schema gate (signal gates added in M4)  [M3]
+	$(PYTHON) -m ingest --source $(SOURCE)
 
 report:  ## Refresh the quality dashboard  [M6]
 	@echo "[M0 stub] report — not yet implemented"

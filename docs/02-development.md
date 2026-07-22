@@ -108,3 +108,80 @@ make ingest SOURCE=droid-slice      # scale source
 make ingest DRY_RUN=1               # plan only, no download
 python -m acquisition --source droid-100 --dry-run --budget-gb 0.2   # guard-trip demo
 ```
+
+---
+
+## M3 — Canonical ingest + schema validation
+
+### What was built
+
+| File | Role |
+|------|------|
+| `ingest/schema_gate.py` | `validate_schema()` — PyArrow schema gate over a LeRobot dataset. |
+| `ingest/canonicalize.py` | `ingest_source()` — confirm LeRobot format, run the gate, quarantine/drop on fail. |
+| `ingest/config.py` | Typed loader for `quality_gates.yaml` (schema/annotation/policy). |
+| `ingest/__main__.py` | CLI: `python -m ingest --source <id>`. Wired to `make validate`. |
+| `tests/test_schema_gate.py` | 9 tests over PyArrow fixtures (valid + broken + quarantine/drop). |
+
+### Decision record — validation engine is **Hybrid** (PyArrow now, Spark at M4)
+
+The brief flags Spark-vs-PyArrow as a stop-and-ask. The choice made (and open to
+override): **schema validation in PyArrow, signal gates in Spark (M4).**
+
+- The schema gate is a feature-existence / dtype / column check — the "~50-line
+  PyArrow job" the brief itself points at. Running it in Spark over a 2.7 MB parquet
+  would read as over-engineering.
+- The M4 signal gates (jerk, outlier z-scores, missing-frame ratio) are per-episode
+  timeseries math across many episodes — genuinely Spark's batch strength, and a
+  credible Spark showcase that preserves the `spark/jobs/` pattern and the
+  "skills scale up from the prior project" thesis.
+
+This mirrors the Kafka decision: right-size per stage, keep the heavyweight tool
+where it earns its place. `spark/jobs/schema_validation.py` was removed;
+`spark/jobs/signal_gates.py` remains for M4.
+
+### What the gate checks (v3.0-aware)
+
+Schema is a **dataset-level** property (all episodes share one `meta/info.json`), so
+the gate accepts or quarantines the dataset as a whole; per-episode quality is M4.
+
+1. Required low-dim features declared in `info.json` (`observation.state`, `action`).
+2. At least one image feature present (any of `image_keys_any_of`). Image features are
+   **video files**, declared in `info.json` but not parquet columns — handled explicitly.
+3. Language instruction resolvable: `task_index` + `meta/tasks.parquet` (v3.0), or a
+   `language_instruction`/`task` column (v2.0 shapes).
+4. Cross-check: each non-image required feature is an actual column in the data parquet
+   (guards against an `info.json` that over-declares).
+
+On failure: `on_fail: quarantine` moves the dataset to `data/quarantine/<id>/` and
+writes `_rejects.json` (reasons + timestamp); `drop` deletes it. Passing datasets are
+logged `ingest_ready` and left in place for M4 (which writes curated + evicts raw).
+
+### What was verified on Windows (dev machine)
+
+- `make test` — **14 passed** (5 guard + 9 schema/ingest), incl. quarantine & drop paths.
+- **Real-data check:** pulled only `droid_100`'s `meta/` + data parquet (~2.8 MB, no
+  videos) and ran the gate → **passed**, codebase v3.0, 12 features, all required
+  features + 3 image streams present, zero reasons.
+- CLI degrades gracefully when data isn't acquired yet (`ingest_error`, exit 1).
+
+### Verify on Ubuntu (end-of-phase checklist)
+
+```bash
+make validate SOURCE=droid-100
+#   Requires `make ingest SOURCE=droid-100` to have run first (M2 download).
+#   expect JSON: schema_result passed=true codebase_version="v3.0";
+#                ingest_ready (dataset left under data/raw/droid-100 for M4).
+```
+
+To exercise the reject path, point at a malformed dataset (or temporarily tighten
+`required_features`): expect `ingest_quarantined`, the dataset moved to
+`data/quarantine/droid-100/`, and a `_rejects.json` listing the reasons.
+
+### `make validate` interface
+
+```
+make validate                    # schema-gate the dev source (droid-100)
+make validate SOURCE=droid-slice # schema-gate the scale source
+python -m ingest --source droid-100   # same, directly
+```

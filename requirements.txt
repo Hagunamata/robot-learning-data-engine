@@ -6,13 +6,13 @@
 
 pyyaml            # config parsing (config/*.yaml)
 huggingface_hub   # M2 — selective, file-granular acquisition from the Hub
+pyarrow           # M3 — Parquet schema gate (read info.json features + data columns)
 
 # --- dev/test ---
 pytest            # unit/smoke tests (`make test`)
 
 # --- added per milestone ---
-# pyarrow          # M3 — Parquet episode I/O (read meta/episodes, split episodes)
-# pyspark          # M3/M4 — batch validation (local mode)
+# pyspark          # M4 — signal quality gates (jerk/outlier/missing-frame), local mode
 # psycopg[binary]  # M5 — catalog writer -> Postgres
 # apache-airflow   # runs in its own container; not a local dep
 # streamlit        # M6 — only if the dashboard DECISION lands on Streamlit
