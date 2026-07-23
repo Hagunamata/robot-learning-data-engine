@@ -1,334 +1,222 @@
-# 01 — Conception
+# Conception & design
 
-> Phase 1 (Conception) design document for the **Robot-Learning Data Engine**.
-> Companion to `docs/architecture.svg`. Mirrors the conception phase of the prior
-> project ([dark-factory-data-platform](https://github.com/Hagunamata/dark-factory-data-platform))
-> and reuses its "why X, not Y?" justification style.
+This document explains **what** the Robot-Learning Data Engine is, **why** it is built
+the way it is, and the trade-offs I made along the way. If you are reviewing or
+reproducing this project, start here for the reasoning, then follow
+[`verification.md`](verification.md) to run it yourself.
 
----
+It is the second of a two-part portfolio arc. The first,
+[dark-factory-data-platform](https://github.com/Hagunamata/dark-factory-data-platform),
+was a batch data platform over simulated tabular factory telemetry (Kafka → Postgres →
+Spark → Postgres, orchestrated by Airflow, observed with ELK). This project takes the
+same batch-processing and orchestration discipline and points it at something much
+harder: **real, heterogeneous, multimodal robot-demonstration data, under a hard storage
+constraint.** My aim was to show that those skills transfer from tidy tabular rows to
+terabyte-scale robot episodes — and to design honestly for a machine that cannot hold the
+data it processes.
 
-## 1. Project context
+## What it does
 
-This is the **second** portfolio project in a two-part arc. The first,
-`dark-factory-data-platform`, built a batch data platform over simulated tabular
-factory telemetry: Kafka → Postgres (`raw`) → Spark → Postgres (`analytics`),
-orchestrated by Airflow, observed through the ELK stack, packaged with Docker
-Compose and a Makefile.
-
-The thesis of *this* project is that the **same batch-processing and orchestration
-discipline scales from tabular telemetry to real, heterogeneous, multimodal robot
-demonstration data — under a hard storage constraint.** Concretely, the engine:
+The engine is a single vertical batch pipeline that:
 
 1. **acquires** public robot-demonstration episodes from the Hugging Face Hub,
-2. **normalizes** them to a single canonical on-disk format (LeRobot),
-3. **validates and quality-filters** them in batch,
+2. treats them in the canonical **LeRobot** on-disk format,
+3. **validates and quality-filters** them (schema + signal-quality gates),
 4. **augments** the corpus with synthetic episodes for under-represented tasks,
-5. **publishes** a versioned, catalogued dataset plus a data-quality view.
+5. **publishes** a versioned, catalogued dataset plus a data-quality dashboard,
 
-The design philosophy is inherited verbatim from the prior repo: **architectural
-clarity over production hardening.** Every component runs single-node in the
-simplest reasonable configuration; what would change at scale is *documented*
-rather than *built*. The course brief asks for this reasoning explicitly, and it is
-the strongest defence against the criticism that a stack was assembled without
-thought.
+all while **never letting raw data exceed a fixed disk budget** — the idea I most wanted
+to demonstrate (see [Process-and-evict](#process-and-evict-the-headline)).
 
-## 2. Data sources and volume strategy
+My guiding principle throughout is **architectural clarity over production hardening**:
+every component runs single-node in the simplest configuration that makes the point, and
+where something would be built differently at scale, I *document* that rather than build
+it. I would rather ship a system whose every part I can justify than a pile of tools
+assembled by reflex.
 
-### 2.1 Sources
+## Why this data is hard
 
-Robot-learning data is large, multimodal (proprioception + one or more camera
-streams + a language instruction), and published as pull-based dataset files — not
-live event streams. The v1 corpus is built from the **DROID** family of manipulation
-demonstrations:
+Robot-learning data is large, multimodal (joint/end-effector state, one or more camera
+streams, and a language instruction), and shipped as pull-based dataset files rather than
+live event streams. The full [DROID](https://droid-dataset.github.io/) release is measured
+in **terabytes**, while a realistic working machine here has roughly **500 GB** of disk.
 
-| Role     | Source (v1)                            | Purpose                                          | License (basis / mirror)   |
-|----------|----------------------------------------|--------------------------------------------------|----------------------------|
-| `dev`    | `lerobot/droid_100` (v2.0)             | Tiny (100 episodes); build & debug the pipeline  | CC-BY 4.0 / MIT            |
-| `scale`  | `IPEC-COMMUNITY/droid_lerobot` (v2.0)  | Prove the storage-aware path; trip the guard     | CC-BY 4.0 / Apache-2.0     |
-| `future` | OXE component (off)                    | Cross-embodiment ingest; deferred past v1        | (per source)               |
+"Download everything, then process" is therefore impossible by construction — and that
+constraint is exactly what makes the project interesting. The whole design is organised
+around processing far more data than can ever sit on disk at one instant.
 
-> **Repo IDs, LeRobot codebase version (v2.0), feature keys, and licenses were
-> verified against the live dataset cards in M1 (2026-07-22)** — not invented. Both
-> DROID mirrors relabel the license on their card (MIT / Apache-2.0); per §2.3 the
-> cited *basis* is the official DROID release (CC-BY 4.0), with each mirror's stated
-> license recorded alongside it in `config/sources.yaml`. The v2.0 language field is
-> `language_instruction` (not `task`) — pinned in `config/quality_gates.yaml`.
+## Data sources
 
-**Licensing.** DROID's official release is **CC-BY 4.0**; that is the basis cited in
-the catalog and README even where a Hub mirror is relabelled Apache-2.0. Any
-non-commercial (CC-BY-NC) source is flagged loudly and kept out of v1 unless
-explicitly approved.
+| Role | Source | Purpose | License (basis / mirror) |
+|------|--------|---------|--------------------------|
+| dev | [`lerobot/droid_100`](https://huggingface.co/datasets/lerobot/droid_100) | 100 episodes — build and debug the whole pipeline fast | CC-BY 4.0 / MIT |
+| scale | [`IPEC-COMMUNITY/droid_lerobot`](https://huggingface.co/datasets/IPEC-COMMUNITY/droid_lerobot) | The full DROID corpus — prove the storage-aware path by tripping the guard | CC-BY 4.0 / Apache-2.0 |
+| future | an Open X-Embodiment component | Cross-embodiment ingest — deliberately deferred | (per source) |
 
-### 2.2 The volume problem
+I verified every repo ID, the LeRobot format version, the feature keys, and the licenses
+against the live dataset cards and each dataset's own `meta/info.json` rather than
+trusting any single label. Two things worth calling out:
 
-The working machine holds roughly **500 GB total**. A full robot-learning corpus is
-far larger than that — the complete DROID release alone is measured in terabytes.
-The naïve "download everything, then process" pattern is therefore impossible by
-construction, which is exactly the constraint that makes this project interesting.
+- **Licensing.** DROID's official release is **CC-BY 4.0**. Both Hub mirrors relabel their
+  card (MIT / Apache-2.0), so I record the **official basis (CC-BY 4.0)** as the cited
+  license and keep the mirror's stated license alongside it in
+  [`config/sources.yaml`](../config/sources.yaml) and the catalog. No non-commercial
+  (CC-BY-NC) source is used. Being explicit about provenance matters more to me than
+  picking whichever label is most convenient.
+- **Format.** `lerobot/droid_100` is LeRobot **codebase v3.0** (the card metadata says
+  v2.0, but `info.json` — the authoritative source — says v3.0). v3.0 aggregates many
+  episodes into each data/video file, which shaped the acquisition granularity; the
+  [development history](02-development.md) tells that story.
 
-The volume strategy is **selective, streamed acquisition under a hard budget**: pull
-only the chosen episodes, cap resident bytes at a configurable budget
-(`storage_budget_gb`, a ≤400 GB design ceiling under the 500 GB physical limit), and —
-the headline mechanism — **evict raw episodes as soon as they have been curated** (§5).
-This lets the pipeline process far more total data than can ever sit on disk at one
-instant. For the M6 scale demo the budget is deliberately set **low (25 GB)** so the
-~90 GB `droid-slice` visibly trips the guard; a full run simply raises the number.
-
-## 3. Architecture overview
-
-A single vertical batch pipeline. Two stages are direct evolutions of the prior
-project (marked *reused*).
+## Architecture
 
 ```
-        Public sources (Hugging Face Hub: DROID-100, DROID slice, OXE later)
+        Public sources (Hugging Face Hub: DROID-100 dev, DROID slice at scale, OXE later)
                                   │
+   Storage guard  ───────►  Selective acquisition   (stream/pull only what fits the budget)
+   (configurable cap)             │
                                   ▼
-   Storage guard  ───────►  Selective acquisition   (stream/pull only chosen episodes)
-   (~400 GB cap)                  │
-                                  ▼
-                          Canonical ingest           (convert to LeRobot format)
+                          Canonical LeRobot data     (schema-gated)
                                   │
-                                  ▼
-   Synthetic data  ──────►  Batch validation          (*reused* Spark; schema, jerk, outliers)
-   (*reused* generator)           │
+   Synthetic  ───────────►  Signal-quality gates      (jerk / outliers / missing frames)
+   augmenter                     │
                                   ▼
                           Curated dataset             (versioned; raw copy evicted)
                                   │
                      ┌────────────┴────────────┐
                      ▼                          ▼
               Data catalog                Quality dashboard
-        (Postgres; source, license,   (Kibana or Streamlit — DECISION;
-         stats, version)               yield, task mix, storage used)
+        (Postgres / sqlite:           (Streamlit, reads the catalog:
+         source, license, stats,       pass-rate, task mix, peak-vs-budget)
+         version, lineage)
 
-           Orchestrated by Airflow · packaged with Docker Compose + Makefile
+           Orchestrated by Airflow · logs to ELK · packaged with Docker Compose + Makefile
 ```
 
-The stage boundaries map cleanly onto Airflow tasks, and each stage logs its
-**running disk-used-vs-budget figure** to stdout for ELK to pick up.
+Every stage emits structured JSON to stdout — including the running
+disk-used-vs-budget figure — so ELK can pick it up, and the stage boundaries map cleanly
+onto Airflow DAG tasks.
 
-## 4. Component justifications
+## Component choices
 
-Each component follows the prior repo's template: **Why**, **Why not the
-alternatives**, **Implementation discipline** (the single-node scope we actually
-ship).
+For each component I give the reasoning, the alternative I rejected, and the deliberately
+modest scope I actually ship.
 
-### 4.1 Acquisition + storage guard  *(new)*
+**Acquisition + storage guard.** `huggingface_hub` pulls only the files that fit the
+budget and never materialises a full corpus; a thin storage guard measures on-disk bytes
+and refuses any pull that would exceed the cap. I avoided a bulk `git lfs` clone (it
+fetches the whole repo — the exact thing that cannot fit) and `datasets` row-streaming (a
+streamed row's on-disk cost is opaque; I want real byte accounting). Scope: a single
+process, byte accounting by direct measurement — not a distributed quota service.
 
-- **Why:** `huggingface_hub` + `datasets` streaming pulls only the selected episodes
-  and never materialises a full corpus. A thin **storage guard** accounts bytes
-  against the 400 GB cap before each pull and refuses any acquisition that would
-  exceed it.
-- **Why not** a plain bulk download or `git lfs clone`? Both fetch the entire repo,
-  which does not fit on disk and defeats the entire premise of the project.
-- **Implementation discipline:** single-process, synchronous streaming. Byte
-  accounting is a simple on-disk `du`-style measurement plus a running ledger — not
-  a distributed quota service.
+**Canonical format — LeRobot.** LeRobot is the format the field has converged on, so
+building around it keeps the output compatible with the ecosystem's tooling and training
+loops. Inventing a bespoke schema would isolate the dataset for no gain. I pin the exact
+feature keys against each dataset's real `info.json` rather than guessing them.
 
-### 4.2 Canonical ingest → LeRobot format  *(new)*
+**Validation — a hybrid of PyArrow and Spark.** Schema validation is a feature-existence
+/ dtype check — a small PyArrow job; running it on Spark would be theatre. The signal
+gates (jerk, outliers, missing frames) are per-episode timeseries maths across many
+episodes — genuinely Spark's batch strength, and the natural continuation of the Spark
+work in my first project. So I use PyArrow for schema and **Spark (local mode) for the
+signal gates**, with a pure-Python engine alongside for the small dev source and CI. This
+is the same right-sizing judgement as the Kafka decision below.
 
-- **Why:** heterogeneous sources must land in one shape before validation is even
-  meaningful. **LeRobot** is the format the field has converged on for robot-learning
-  datasets, so canonicalising to it maximises downstream compatibility.
-- **Why not** invent a bespoke schema? It would isolate the dataset from the
-  ecosystem's tooling and training loops, and add a translation burden for no gain.
-- **Implementation discipline:** the exact required feature keys
-  (e.g. state / action / task / at-least-one image) are pinned against the *real*
-  LeRobot spec in M1 and cited in code comments — not guessed here.
+**Catalog — PostgreSQL (with a sqlite fallback).** A durable, queryable record of *what
+was produced* — one row per dataset version with source, license, counts, task
+distribution, gate pass-rate, bytes-on-disk, and git commit. A flat JSON manifest would
+lose queryability and version diffing. Postgres is the stack's catalog; a stdlib sqlite
+backend lets the whole thing run with no server for local work and CI.
 
-### 4.3 Batch validation + quality gates — Spark, local mode  *(reused)*
+**Synthetic augmenter.** Real corpora are unbalanced. The augmenter mints LeRobot-format
+episodes for under-represented tasks and routes them through the **same** validation gates
+as real data — no laxer path, or synthetic artefacts could quietly pollute the curated
+set. Generation is procedural and clearly labelled synthetic in the catalog; there is no
+learned generative model here, and I do not claim these episodes substitute for real
+demonstrations — they only balance the task mix.
 
-- **Why:** validation (schema conformance, signal-quality gates such as jerk and
-  outlier z-scores, missing-frame ratio) is an embarrassingly parallel scan over
-  Parquet episode data — precisely Spark's batch strength, and a direct reuse of the
-  prior repo's `spark/jobs/` pattern.
-- **Why not** always Spark? For a step a 50-line PyArrow/pandas job would handle,
-  Spark is overkill. **DECISION:** the choice of Spark vs plain PyArrow for any
-  individual step is escalated to the human before it is made.
-- **Implementation discipline:** Spark runs in local mode, single node, default
-  config. No cluster, no YARN/K8s.
+**Orchestration — Airflow; observability — ELK; dashboard — Streamlit.** Airflow makes the
+stage dependencies, retries, and per-task logging explicit; ELK centralises the structured
+logs. For the *metrics* dashboard I chose **Streamlit reading the catalog directly** over
+Kibana: the numbers a reviewer cares about (pass-rate, task mix, peak-vs-budget) already
+live in the catalog and manifests, so serving them from there is lighter and more honest
+than standing up Elasticsearch to visualise logs. Kibana stays for pipeline **logs**.
 
-### 4.4 Catalog / metadata — PostgreSQL  *(reused)*
+## Process-and-evict (the headline)
 
-- **Why:** a durable, queryable record of *what was produced* — one row per dataset
-  version carrying source, license, episode/frame counts, task distribution, gate
-  pass-rate, bytes-on-disk, and git commit. This is the `analytics`-schema spirit of
-  the prior repo, renamed to a `catalog` schema.
-- **Why not** a flat JSON/CSV manifest? It loses queryability, referential
-  discipline, and the ability to diff versions — and Postgres is already in the stack.
-- **Implementation discipline:** a single `catalog` schema, one table (see brief
-  §6.3), initialised from `postgres/init/`.
+This is the defining behaviour, and the one result I most want to be *measured* rather
+than asserted.
 
-### 4.5 Synthetic augmenter — `data_generator/` evolved  *(reused)*
+**The invariant:** raw data is never fully resident. At any instant the disk holds only
+the curated output, a bounded working set of raw files in flight, and a small quarantine
+of rejects. The full source corpus flows *through* the budget rather than sitting *inside*
+it.
 
-- **Why:** real corpora are unbalanced; rare tasks are under-represented. The prior
-  repo's `data_generator/` expanded a small CSV into a synthetic set; here it evolves
-  to **mint LeRobot-format episodes** for under-represented tasks and routes them
-  through the *same* validation gates as real data.
-- **Why not** a separate, laxer path for synthetic data? Bypassing the gates would
-  let synthetic artefacts pollute the curated set undetected. Same gates, same rigour.
-- **Implementation discipline:** generation is procedural and clearly labelled in the
-  catalog as synthetic; no learned generative model in v1.
+**The loop:** the guard checks usage against the budget → acquisition pulls a bounded
+batch that fits → the batch is gated and its passing episodes are written to the curated
+set → **the raw copy is evicted**, freeing the budget for the next batch → the
+disk-used-vs-budget figure is logged throughout.
 
-### 4.6 Orchestration — Airflow  *(reused)*
+**Why it matters:** it turns a hard physical limit into a throughput parameter. The scale
+run points the pipeline at the full DROID slice with the budget set deliberately low
+(25 GB) and demonstrates, with three measured figures, that **peak concurrent raw stays
+below the budget while total bytes processed greatly exceeds it**. At production scale the
+eviction would become an object-store lifecycle policy and the guard a quota service — the
+logic is identical, only the substrate changes.
 
-- **Why:** the pipeline stages are a DAG with clear dependencies; Airflow makes the
-  ordering, retries, and per-task logging explicit, reusing the prior `airflow/dags/`
-  layout.
-- **Why not** a shell script or Makefile-only flow? It hides dependencies and gives
-  no per-task observability or retry semantics. (`make demo` still exists as the
-  human-facing one-command entry point; it *triggers* the DAG.)
-- **Implementation discipline:** a single DAG, `LocalExecutor`, single scheduler.
+## Why not Kafka
 
-### 4.7 Observability — ELK  *(reused)*
+My first project used Kafka as a durable buffer between continuous producers and Postgres.
+I **deliberately dropped it here**, and I think the omission is a design signal, not a gap:
 
-- **Why:** centralised, searchable container logs — identical need and solution to
-  the prior repo. Every stage logs structured lines (including disk-used-vs-budget)
-  that Logstash ships to Elasticsearch.
-- **Why not** scattered stdout only? It does not survive container restarts and is
-  not searchable across stages.
-- **Implementation discipline:** single-node ELK, default indices.
+- The sources are pull-based dataset files, not live streams — there is no firehose to
+  decouple from a slow consumer, which is the problem Kafka solves.
+- The natural back-pressure mechanism is the storage guard and the process-and-evict loop,
+  not a message broker.
+- Adding Kafka would be resume-driven architecture: a broker, topics, and consumer-group
+  semantics that carry real operational weight and justify nothing here.
 
-### 4.8 Quality dashboard — **DECISION (Kibana vs Streamlit)**
+Dropping a tool I used before, and being able to say *precisely why*, demonstrates more
+judgement than carrying it forward would. Right-sizing is the point.
 
-- The dashboard must show gate pass-rate, task distribution, and storage used.
-  **Kibana** maximises continuity with the prior repo's ELK stack; a small
-  **Streamlit** app would be lighter and read directly from the catalog. Per the
-  brief this is a human decision — default to **Kibana** if unanswered. The scaffold
-  ships only a `dashboard/README.md` placeholder until the decision lands (M1/M6).
+## In scope vs. at scale
 
-## 5. The process-and-evict design (headline mechanism)
+I keep an honest line between what this repo implements and what a production system would
+add:
 
-This is the defining behaviour of the project and the single feature most worth
-demonstrating.
+| Concern | Implemented here | At production scale |
+|---------|------------------|---------------------|
+| Storage safety | Hard budget checked before every pull; eviction after curation; disk-vs-budget logged | Object-store tiering, a quota service, soft/hard watermarks |
+| Data quality | Schema + signal gates with quarantine, calibrated thresholds, per-batch metrics | Learned anomaly detection, human review of quarantine, per-embodiment tuning |
+| Lineage | One catalog row per version + a reproducible run manifest | Content-addressed storage, a full provenance graph |
+| Observability | Structured stdout → ELK; Streamlit metrics dashboard | Metric SLOs, alerting on pass-rate regressions |
+| Compute | Spark local mode; single-node everything | A real cluster; distributed acquisition |
 
-**The invariant:** *raw data is never fully resident.* At any instant, disk holds
-only (a) the curated dataset, (b) a bounded working set of raw episodes currently
-in flight, and (c) the quarantine of rejects. The full source corpus — terabytes —
-flows *through* the 400 GB budget rather than sitting *inside* it.
+## Trade-offs & limitations
 
-**The loop:**
+- **Videos are not re-segmented.** In v3.0 a video file spans many episodes; when an
+  episode is quarantined I still keep the whole video file in the curated set and record
+  which episodes are valid, rather than re-encoding with ffmpeg. Curated storage therefore
+  grows to the kept corpus — bounded by disk, and separate from the raw budget.
+- **Gate thresholds are a starting point,** calibrated from the dev source and open to
+  tuning; they are configuration, not physics.
+- **Single-node Spark/Airflow/ELK are demonstrative,** not production-grade.
+- **v1 covers one dataset family (DROID);** cross-embodiment (OXE) is future work.
 
-1. The **storage guard** checks current usage against the 400 GB cap.
-2. Acquisition **streams a bounded batch** of raw episodes into `data/raw/` — only as
-   many as fit under the cap.
-3. Ingest canonicalises the batch to LeRobot format; validation applies the gates.
-4. Passing episodes are written to `data/curated/`; failing ones go to
-   `data/quarantine/` (or are dropped — a **DECISION** on `on_fail`).
-5. **The raw copy of the batch is evicted**, freeing budget for the next batch.
-6. The running **disk-used-vs-budget** figure is logged at every stage.
+## Roadmap
 
-**Why this matters:** it converts a hard physical limit into a throughput
-parameter. The scale test (M6) points the pipeline at the bounded DROID slice and
-demonstrates the guard *tripping* — i.e. more total data processed than was ever
-held at once, with peak disk usage staying below the 400 GB cap. That observable is
-the project's headline result.
+- **OXE cross-embodiment ingest** — the acquisition + canonicalisation path generalises;
+  the next dataset family is the obvious extension.
+- **Video re-segmentation** on curation, to drop quarantined footage.
+- **Fleet-telemetry / digital-twin / safety-traceability** follow-on projects that consume
+  the curated, catalogued output.
 
-**Production extension:** at scale, eviction becomes an object-store lifecycle
-policy (e.g. S3 tiering) and the guard becomes a quota service; the *logic* is
-identical, only the substrate changes.
+## Reproducing this
 
-## 6. Why not Kafka (a deliberate right-sizing)
-
-The prior project used Kafka as a durable ingestion buffer between continuous event
-producers and Postgres. **This project deliberately drops Kafka**, and that omission
-is a positive design signal, not a gap:
-
-- **The sources are pull-based dataset files, not live streams.** There are no
-  continuous producers to decouple from a slow consumer — the "buffer between a
-  firehose and a database" problem Kafka solves does not exist here.
-- **The natural back-pressure mechanism is the storage guard, not a broker.** What
-  bounds intake is the 400 GB budget and the process-and-evict loop, which a message
-  queue would neither help nor replace.
-- **Adding Kafka would be resume-driven architecture.** It would introduce a broker,
-  topics, and consumer-group semantics that carry operational weight and justify
-  nothing. Kleppmann's framing applies: choose the buffer only when the shape of the
-  data flow demands one.
-
-Dropping a tool used in the prior project — and being able to say *precisely why* —
-demonstrates judgement more convincingly than carrying it forward would. Right-sizing
-is the point.
-
-## 7. Cross-cutting concerns
-
-Following the prior repo, each concern separates what is **Implemented** from
-**Production extensions**.
-
-### 7.1 Storage safety
-- **Implemented:** hard 400 GB guard checked before every acquisition; eviction after
-  curation; disk-used-vs-budget logged everywhere.
-- **Production extensions:** object-store tiering, quota service, soft/hard watermarks.
-
-### 7.2 Data quality
-- **Implemented:** schema + signal gates (jerk, outlier, missing-frame) with a
-  quarantine-vs-drop policy; per-batch pass-rate metrics.
-- **Production extensions:** learned anomaly detection, human-in-the-loop review of
-  quarantine, per-embodiment gate tuning.
-
-### 7.3 Lineage & versioning
-- **Implemented:** one catalog row per dataset version with source, license, stats,
-  and git commit.
-- **Production extensions:** content-addressed dataset storage, full provenance graph.
-
-### 7.4 Observability
-- **Implemented:** structured stdout → ELK; dashboard for yield / task mix / storage.
-- **Production extensions:** metric SLOs, alerting on pass-rate regressions.
-
-### 7.5 Licensing compliance
-- **Implemented:** license recorded per source in catalog + README; NC sources flagged.
-- **Production extensions:** automated license-gate in CI.
-
-### 7.6 Reproducibility
-- **Implemented:** Docker Compose + Makefile, pinned config, committed sample episodes.
-- **Production extensions:** fully pinned data snapshots, CI that runs the demo.
-
-## 8. Reproducibility
-
-The one-command runtime mirrors the prior repo:
-
-1. `git clone` the repository.
-2. `cp .env.example .env` and review values.
-3. `make up` — brings up the stack (Postgres, Airflow, ELK, dashboard).
-4. `make demo` — runs the full pipeline end-to-end on **DROID-100** with no manual steps.
-
-Additional verbs: `make ingest` (acquire the dev source), `make validate` (run the
-quality gates), `make report` (wire/refresh the dashboard). No dataset files are
-committed; only code, config, scripts, docs, and a handful of sample episodes.
-
-## 9. Advantages and disadvantages
-
-**Advantages**
-- Demonstrates that batch/orchestration skills transfer from tabular to multimodal
-  robot data.
-- The process-and-evict loop is a concrete, demonstrable answer to a real hardware
-  constraint.
-- Honest right-sizing (dropping Kafka) shows architectural judgement.
-- Maximal reuse of the prior stack lowers risk and highlights transferable skill.
-
-**Disadvantages / caveats**
-- **Synthetic-data caveat:** procedurally minted episodes are not a substitute for
-  real demonstrations; they only balance task distribution and are labelled as such.
-- Single-node Spark/Airflow/ELK are demonstrative, not production-grade.
-- v1 covers one dataset family (DROID); cross-embodiment (OXE) is future work.
-
-## 10. Risks and open questions
-
-- **Format drift:** the LeRobot spec evolves; exact feature keys must be verified
-  against the live spec before ingest is written (M1/M2).
-- **Repo-ID accuracy:** Hub repo IDs are placeholders until verified against the real
-  dataset cards.
-- **Open DECISIONs (owned by the human, resolved in M1):**
-  - Quality-gate thresholds and `on_fail` = quarantine vs drop (§6.2 of the brief).
-  - Which sources and `max_episodes` go into v1 (§6.1).
-  - Kibana vs Streamlit for the dashboard (§4).
-  - Spark vs plain PyArrow for any individual step (§4).
-
-## 11. Next phase
-
-**M1 — Config contracts.** Fill `config/sources.yaml` and `config/quality_gates.yaml`
-with the human's chosen values (resolving the open DECISIONs above); verify the
-Hugging Face repo IDs and LeRobot feature keys against the real sources. **No data
-movement yet.**
-
-Thereafter: M2 acquisition + storage guard → M3 canonical ingest + schema validation
-→ M4 signal gates + eviction → M5 synthetic augmenter + catalog + `make demo` →
-M6 scale test (guard trips) + dashboard → M7 finalization docs.
+The runtime is Docker Compose v2 + a Makefile, targeting Linux/WSL2. The one-command path
+is `make up && make demo`; a fully local path (no server, no JVM) is
+`make demo ENGINE=local CATALOG=sqlite`. For a guided, step-by-step confirmation with
+expected output at each stage, follow [`verification.md`](verification.md). No dataset
+files are committed — only code, config, docs, and a tiny sample. The story of building
+it, including the decisions that changed under contact with real data, is in
+[`02-development.md`](02-development.md).

@@ -61,7 +61,7 @@
   <!-- Dashboard -->
   <rect x="430" y="452" width="240" height="60" rx="8" class="box"/>
   <text x="550" y="476" text-anchor="middle" class="title">Quality dashboard</text>
-  <text x="550" y="494" text-anchor="middle" class="sub">Kibana / Streamlit — yield, storage</text>
+  <text x="550" y="494" text-anchor="middle" class="sub">Streamlit — pass-rate, task mix, storage</text>
 
   <!-- flows -->
   <path class="flow" d="M410,98 L410,120"/>
@@ -89,5 +89,5 @@
   <text x="166" y="636" class="lgd">reused from prior project</text>
   <line x1="340" y1="631" x2="372" y2="631" class="feed"/>
   <text x="380" y="636" class="lgd">storage-guard feedback / synthetic feed</text>
-  <text x="20" y="662" class="lgd">Note: no Kafka — sources are pull-based files, not live streams (see docs/01-conception.md §6).</text>
+  <text x="20" y="662" class="lgd">Note: no Kafka — sources are pull-based files, not live streams (see 01-conception.md → Why not Kafka).</text>
 </svg>
