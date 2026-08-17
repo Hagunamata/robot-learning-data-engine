@@ -31,6 +31,8 @@ many episodes per data file, so both engines group the ``data/`` parquet by
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -278,6 +280,12 @@ def run_spark(dataset_root: str | Path, thresholds: SignalGates, calibration: Ca
     per group via applyInPandas, so results match run_local exactly. The (small)
     calibration + thresholds are captured in the closure and shipped to the workers.
     """
+    if not os.getenv("JAVA_HOME") and not shutil.which("java"):
+        raise RuntimeError(
+            "the 'spark' engine needs a Java runtime (JAVA_HOME unset and `java` not on PATH). "
+            "Install a JDK — e.g. `sudo apt install default-jdk` — or use the 'local' engine "
+            "(ENGINE=local), which needs no JVM and returns identical verdicts."
+        )
     from pyspark.sql import SparkSession
     from pyspark.sql.types import (
         BooleanType,

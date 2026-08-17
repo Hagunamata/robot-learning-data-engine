@@ -40,6 +40,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from acquisition.config import load_sources
 from acquisition.logging_utils import log_event
 from acquisition.storage_guard import BYTES_PER_GB, StorageGuard
 from catalog import CatalogWriter, build_record

@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="override storage_budget_gb from config (useful for guard-trip demos)",
     )
+    parser.add_argument(
+        "--data-root",
+        default=None,
+        help="override data_root from config (use an empty dir for a clean guard-trip demo)",
+    )
     args = parser.parse_args(argv)
 
     cfg = load_sources(args.config)
@@ -45,7 +50,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     budget_gb = args.budget_gb if args.budget_gb is not None else cfg.storage_budget_gb
-    guard = StorageGuard(cfg.data_root, budget_gb=budget_gb)
+    data_root = args.data_root if args.data_root is not None else cfg.data_root
+    guard = StorageGuard(data_root, budget_gb=budget_gb)
     guard.log_usage("startup", source=source.id)
     acquire(source, guard, dry_run=args.dry_run)
     guard.log_usage("final", source=source.id)
