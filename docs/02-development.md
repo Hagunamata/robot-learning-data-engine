@@ -230,6 +230,12 @@ it adds no dependency of its own. Kibana remains for logs; it is not in the metr
 Two things stand out looking back. First, most of the interesting engineering happened at
 the boundary with reality — the format version, the `tasks.parquet` shape, the gate that
 was wrong three times — none of which a plan can fully anticipate; the value was in noticing
-and adjusting. Second, the constraint *was* the design: bounding raw disk forced the
+and adjusting. The first Ubuntu pass through [`verification.md`](verification.md) added to
+that list: it caught a missing `load_sources` import on the real `droid-slice` path (which
+the Windows dev box couldn't exercise, since it can't download the corpus), surfaced that
+the storage guard measures the whole data-root — so the tiny-budget guard-trip demo needs
+an isolated directory — and reminded me that Spark's JVM and the `sqlite3` CLI are
+environment prerequisites worth stating plainly. That is exactly what a verification
+runbook is for. Second, the constraint *was* the design: bounding raw disk forced the
 process-and-evict loop, and that loop is the thing worth showing. What I would build next
 is written up in the [conception's roadmap](01-conception.md#roadmap).

@@ -25,10 +25,17 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # Optional, only for the steps that use them:
-pip install pyspark          # Step 4b / Step 8 with ENGINE=spark  (also needs a JDK: sudo apt install default-jre)
+sudo apt install default-jdk   # Step 4b / Step 8 with ENGINE=spark — Spark needs a JVM
+pip install pyspark            # Step 4b / Step 8 with ENGINE=spark
 pip install "psycopg[binary]"  # Step 9 with CATALOG=postgres
 # Docker + Docker Compose v2   # Step 9 (the stack)
+# sqlite3 CLI is NOT required — the steps below query the catalog with Python.
 ```
+
+> **Everything works without Spark.** The `local` engine (pyarrow+numpy) returns
+> identical verdicts and needs no Java. Only use `ENGINE=spark` if you want to exercise
+> the Spark path; if `java` isn't installed the run stops with a clear message telling
+> you to install a JDK or use `ENGINE=local`.
 
 ---
 
@@ -133,19 +140,23 @@ ls data/curated/droid-100 && test ! -e data/raw/droid-100 && echo "raw evicted O
 
 - [ ] working? ______
 
-### 4b. Spark engine (needs Java + pyspark) — same result path
+### 4b. Spark engine (optional — needs a JDK + pyspark) — same result path
 
-Re-acquire first (Step 3 evicted the raw copy), then gate with Spark:
+> Requires Java: `sudo apt install default-jdk` and `pip install pyspark`. If Java is
+> not installed the run stops with a clear message — that is expected; **you can skip
+> 4b**, since 4a already proved the gate logic and both engines share one pure core.
+
+Step 4a evicted the raw copy, so re-acquire first, then gate with Spark:
 
 ```bash
 make ingest SOURCE=droid-100
 make validate SOURCE=droid-100 ENGINE=spark
 ```
 
-**Expect:** the same verdicts as 4a (both engines share one pure metric core); a Spark
-session starts and stops. This confirms the `applyInPandas` job.
+**Expect:** the same verdicts as 4a; a Spark session starts and stops. This confirms the
+`applyInPandas` job.
 
-- [ ] working? ______
+- [ ] working? ______  (or skipped — no JDK)
 
 ---
 
@@ -157,8 +168,16 @@ version.
 
 ```bash
 make demo SOURCE=droid-100 ENGINE=local CATALOG=sqlite
-sqlite3 data/catalog.db \
-  "SELECT dataset_version, episode_count, frame_count, gate_pass_rate, notes FROM dataset_version ORDER BY dataset_version;"
+
+# Read the catalog with Python (no sqlite3 CLI needed):
+python - <<'PY'
+import sqlite3
+for r in sqlite3.connect("data/catalog.db").execute(
+    "SELECT dataset_version, episode_count, frame_count, gate_pass_rate, notes "
+    "FROM dataset_version ORDER BY dataset_version"):
+    print(r)
+PY
+# (Or, if you have the CLI: sudo apt install sqlite3; then sqlite3 data/catalog.db "SELECT ...".)
 ```
 
 **Expect** two rows:
@@ -190,12 +209,18 @@ run a scale step — **Storage: peak concurrent raw vs budget** with `Invariant 
 Shows the guard refusing to overshoot: with a 0.2 GB budget it pulls meta + data + the
 first video, then stops.
 
+> Run this against an **empty, isolated** data-root. The guard measures the data-root's
+> footprint, so if you point it at the `data/` you've already filled in Steps 3–6 it will
+> (correctly) report you're already over the 0.2 GB budget and pull nothing. `--data-root`
+> gives it a clean budget to demonstrate against.
+
 ```bash
 python -m acquisition --source droid-100 --dry-run --budget-gb 0.2 --data-root /tmp/rlde-guardtrip
 ```
 
-**Expect:** a `budget_reached` event and `acquire_done ... "files_pulled": 6,
-"gb_pulled": 0.166` (stops before the second video).
+**Expect:** `would_pull` for meta + data + the first video, then a `budget_reached` event
+and `acquire_done ... "files_pulled": 6, "gb_pulled": 0.166` (stops before the second
+video, projected 0.354 GB > 0.2 GB).
 
 > **Why `--data-root` here.** The storage guard measures the *actual* bytes already on
 > disk under `data_root` (default `./data`) as ground truth — not just what this run
