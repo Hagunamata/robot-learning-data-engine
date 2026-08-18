@@ -27,7 +27,7 @@ sources:
   - id: droid-slice
     role: scale                   # bounded slice to prove the storage-aware path
     hf_repo: IPEC-COMMUNITY/droid_lerobot
-    codebase_version: v2.0        # UNVERIFIED — detected from info.json at runtime; confirm at M6
+    codebase_version: v2.0        # verified from meta/info.json at M6 (2026-08-18); v2.0 path templates use episode_chunk/episode_index
     max_episodes: 5000            # ~90 GB; the 25 GB guard is the real ceiling
     license: CC-BY-4.0            # basis: official DROID release
     license_mirror_stated: Apache-2.0  # verified on IPEC-COMMUNITY/droid_lerobot card (2026-07-22)

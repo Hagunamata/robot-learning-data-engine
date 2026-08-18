@@ -7,7 +7,7 @@ output, see [`verification.md`](verification.md).
 
 I built it one stage at a time — acquisition, then ingest, then the quality gates, then
 cataloguing and synthesis, then the scale runner and dashboard — keeping the test suite
-green at every step (it ends at 33 tests). Wherever a real machine couldn't exercise
+green at every step (it ends at 36 tests). Wherever a real machine couldn't exercise
 something (a multi-terabyte download, a JVM I didn't have on the dev box), I built the
 logic to be verifiable in isolation and left a documented path to confirm it end-to-end on
 Linux. That discipline is why the [runbook](verification.md) reads the way it does.
@@ -146,10 +146,76 @@ The trap here was enumeration. A naive `list_repo_tree(recursive=True)` over the
 DROID mirror hangs — it has thousands of video files and materialises the entire tree. The
 fix is to scope enumeration to the `data/` prefix, iterate lazily, and resolve each unit's
 video paths and sizes from the `video_path` template plus a targeted `get_paths_info`,
-never a recursive video listing. Because the path templates come from the dataset's own
-`info.json`, the same code adapts to v2.0 or v3.0. The full real-DROID run streams tens of
-GB through the 25 GB budget on Linux; the [runbook](verification.md) has the bounded
-command and what to expect.
+never a recursive video listing. The path templates come from the dataset's own
+`info.json`, so in principle the same code adapts to v2.0 or v3.0 — though, as the next
+section recounts, "in principle" did a lot of work in that sentence until I actually ran it
+on Linux. The [runbook](verification.md) has the bounded command and what to expect.
+
+## What broke when the scale runner finally met real DROID
+
+Everything above was verified on the synthetic source. The first end-to-end run of the
+*real* path on Linux — `python -m scale --source droid-slice` — failed five times in a row,
+each failure hiding the next. It is the sharpest example in this project of why "the tests
+pass" and "it works on real data" are different claims: the synthetic source shares no code
+with the Hugging Face acquisition path (`HfScaleSource`), so none of these were caught until
+a real download exercised them. I keep the whole sequence here because each fix is a small
+lesson.
+
+1. **`NameError: load_sources`.** A plain missing import in [`scale.py`](../scale.py):
+   `run_hf_scale` called `load_sources("config/sources.yaml")` but only the synthetic path's
+   imports were present. The synthetic runner never calls it, so the test suite was green
+   while the real entry point couldn't start. Fixed by importing it; the lesson is that an
+   unexercised code path is untested no matter how many *other* tests pass.
+
+2. **`KeyError: 'episode_chunk'` — the v2.0/v3.0 assumption was wrong.** The dev source
+   `droid-100` is codebase **v3.0**, whose paths are `.../file-NNN.parquet` and whose
+   `video_path` template uses `{chunk_index}`/`{file_index}`. The scale mirror
+   `IPEC-COMMUNITY/droid_lerobot` is **v2.0**: `.../episode_NNNNNN.parquet` with
+   `{episode_chunk}`/`{episode_index}`. My "reads the template from `info.json`, so it
+   adapts" claim was only half-true — I read the template but hard-coded the *placeholder
+   names* I fed it, and the index regex only matched a `-` separator, not v2.0's `_`. Fixed
+   by matching both separators and supplying every placeholder name across versions (extra
+   keys are ignored by `str.format`), which makes the templating genuinely version-agnostic.
+
+3. **`operands could not be broadcast (237,15) vs (14,)` — the deepest one.** Calibration is
+   supposed to come from the small dev source and transfer to the slice (see [the signal-gate
+   section](#the-signal-gate-i-had-to-design-three-times)). But droid-100 is joint-space
+   (state 7 + action 7 = **14** signal dims) and the IPEC slice is cartesian-space (state 8 +
+   action 7 = **15** dims), so the 14-dim calibration can't score a 15-dim signal. Worse,
+   forcing the shapes to line up would be *silently wrong* — it would compare joint-angle
+   statistics against cartesian metres. The "calibrate from the dev source" design implicitly
+   assumed a shared embodiment schema that these two mirrors don't share. Fix:
+   `_resolve_calibration` now checks whether the dev calibration's per-dim widths actually fit
+   the source; if not, it builds a **source-specific** calibration from a small sample of the
+   source's own episodes and caches it as `calibration/<source>.json`. The sample pulls only
+   the state/action parquet (never the videos) into a temp dir *outside* `data_root`, so it
+   never counts against the storage budget. This is a deliberate, narrow departure from the
+   "never calibrate from the slice" rule — justified only because cross-embodiment thresholds
+   are meaningless, and logged (`calibration_schema_mismatch` → `calibration_built`) so the
+   departure is visible in the run.
+
+4. **`assert_invariant FAILED` — a real result, correctly rejected.** With that fixed the run
+   completed cleanly, then the final assertion failed: `peak_raw=14 MB, total=252 MB,
+   budget=25 GB`. The invariant needs `total_processed > budget`, but this mirror is heavily
+   compressed (~4 MB/episode, ~17 GB for all 5000 episodes), so it can *never* exceed the
+   configured 25 GB budget — the `~90 GB` estimate baked into `sources.yaml` was ~5× too high
+   for this mirror. The honest fix wasn't to weaken the assertion but to size the budget to
+   the demonstration: I added a `--budget-gb` override so a bounded proof uses a budget the
+   data can actually stream past. At `--budget-gb 0.1` the invariant holds *and means
+   something*: peak 14 MB < 100 MB budget < 252 MB processed (2.35×).
+
+5. **`httpx.ConnectError: Name or service not known` — not a bug at all.** A transient DNS
+   failure mid-enumeration. This is exactly what the resumable manifest is for: re-running
+   continues from the last committed unit rather than restarting, so a flaky connection is an
+   annoyance, not a lost run.
+
+The takeaways, in order: an unexercised path is untested (1); reading configuration is not
+the same as *honouring* it (2); a dimension mismatch can be the visible symptom of a
+semantic one, and forcing shapes to agree can hide a real incompatibility (3); when a
+measured invariant fails, fix the measurement's premises, not the assertion (4); and design
+for the boring failures — resumability turned a network blip into a no-op (5). Failures 2
+and 3 are now covered by regression tests (`_source_signal_dims`, `_calibration_fits`, and
+`calibrate_local` on a slice-shaped schema), which is what took the suite from 33 to 36.
 
 ## The dashboard
 

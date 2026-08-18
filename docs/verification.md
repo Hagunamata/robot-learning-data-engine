@@ -191,11 +191,23 @@ Shows the guard refusing to overshoot: with a 0.2 GB budget it pulls meta + data
 first video, then stops.
 
 ```bash
-python -m acquisition --source droid-100 --dry-run --budget-gb 0.2
+python -m acquisition --source droid-100 --dry-run --budget-gb 0.2 --data-root /tmp/rlde-guardtrip
 ```
 
 **Expect:** a `budget_reached` event and `acquire_done ... "files_pulled": 6,
 "gb_pulled": 0.166` (stops before the second video).
+
+> **Why `--data-root` here.** The storage guard measures the *actual* bytes already on
+> disk under `data_root` (default `./data`) as ground truth — not just what this run
+> pulls. Step 5 fills `./data` (curated, calibration, catalog) and Step 8 *depends* on
+> that calibration, so running this guard-trip against the shared `./data` would either
+> trip the 0.2 GB budget at startup (`files_pulled: 0`) or, if you cleared `./data` to
+> avoid that, delete the calibration Step 8 needs. `--data-root` points this one demo at
+> a throwaway directory, so it is independent of run order and leaves `./data` untouched.
+> Do **not** `rm -rf ./data` for this step.
+>
+> Note: because this is `--dry-run`, the `budget_reached`/`final` lines log `used_gb: 0.0`
+> (nothing is written); `acquire_done` reports the *projected* `gb_pulled: 0.166`.
 
 - [ ] working? ______
 
@@ -208,16 +220,43 @@ python -m acquisition --source droid-100 --dry-run --budget-gb 0.2
 
 ```bash
 # Calibration must exist first (Step 5 produced data/calibration/droid-100.json).
-python -m scale --source droid-slice --max-units 60 --engine local --catalog-backend sqlite
+# --budget-gb 0.1 makes the invariant provable on this mirror (see budget note below).
+python -m scale --source droid-slice --max-units 60 --engine local --catalog-backend sqlite --budget-gb 0.1
 
 # Inspect the measured figures and the exact episodes pulled:
 cat data/manifest/v0.1.0-droid-slice.json
 ```
 
-**Expect:** a `scale_done` log with `peak_raw_mb` < the 25 GB budget, `total_processed_mb`
-≫ budget, `invariant_holds: true`. The manifest records `processed_units`,
+> **Budget vs. mirror size.** The `IPEC-COMMUNITY/droid_lerobot` mirror is heavily
+> compressed — roughly **4 MB/episode**, so 60 units ≈ 250 MB and the whole 5000-episode
+> source is only ~17 GB. The invariant requires `total_processed > budget`, so against the
+> config default of `storage_budget_gb: 25` it can **never** hold (`assert_invariant` fails
+> with `total_processed=252 MB, budget=25 GB`). Use `--budget-gb 0.1` (100 MB) so the
+> bounded proof is real: peak raw (~14 MB) < budget (100 MB) < total processed (~250 MB).
+> The run is resumable and idempotent — if you already ran it at the default budget, just
+> re-run with `--budget-gb 0.1`; the manifest's saved peak/total are reused and **nothing
+> re-downloads** (no need to delete anything).
+
+**Expect:** a `scale_done` log with `peak_raw_mb` < budget, `total_processed_mb`
+≫ budget, `invariant_holds: true` (e.g. peak ~14 MB, total ~250 MB against the 100 MB
+`--budget-gb`). The manifest records `processed_units`,
 `processed_episodes` (the real DROID episode indices pulled), `peak_raw_bytes`, and
 `total_processed_bytes`. Re-running continues from where it stopped.
+
+> **Calibration schema.** The dev source `droid-100` is joint-space (state 7 + action 7 =
+> 14 signal dims); the `droid-slice` mirror (`IPEC-COMMUNITY/droid_lerobot`, v2.0) is
+> cartesian-space (state 8 + action 7 = 15 dims). Because the two schemas differ, the
+> `droid-100` calibration cannot transfer. The runner detects this at startup
+> (`calibration_schema_mismatch`) and builds a **source-specific** calibration from a small
+> sample of the slice's own episodes, cached at `data/calibration/droid-slice.json`
+> (`calibration_built`, `scope: source-specific`). This deviates from the "always calibrate
+> from the dev source" rule by necessity — cross-embodiment thresholds are meaningless. If
+> you point `droid-slice` at a mirror that *does* share droid-100's schema, the dev
+> calibration is used directly and no rebuild happens.
+>
+> The sample is fetched to a temp dir outside `data_root`, so it never counts against the
+> 25 GB budget. Over an unauthenticated HF connection this first step can be slow; set an
+> `HF_TOKEN` for faster downloads.
 
 - [ ] working? ______  — record peak / budget / total: ______
 

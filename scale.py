@@ -32,6 +32,7 @@ import argparse
 import json
 import shutil
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterator, Optional, Protocol
@@ -40,11 +41,12 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from acquisition.config import load_sources
 from acquisition.logging_utils import log_event
 from acquisition.storage_guard import BYTES_PER_GB, StorageGuard
 from catalog import CatalogWriter, build_record
 from ingest.config import QualityGates, load_quality_gates
-from spark.jobs.signal_gates import Calibration, EpisodeVerdict, run_signal_gates
+from spark.jobs.signal_gates import Calibration, EpisodeVerdict, calibrate_local, run_signal_gates
 
 _QUARANTINE_SAMPLE_FRAMES = 5
 
@@ -450,7 +452,9 @@ class HfScaleSource:
     def _indices(self, data_path: str) -> tuple[int, int]:
         import re
 
-        m = re.search(r"chunk-(\d+)/(?:file|episode)-(\d+)", data_path)
+        # v3.0 aggregates episodes into `file-NNN.parquet`; v2.0 has one
+        # `episode_NNNNNN.parquet` per episode. Match either separator.
+        m = re.search(r"chunk-(\d+)/(?:file|episode)[-_](\d+)", data_path)
         return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
     def list_units(self) -> Iterator[Unit]:
@@ -464,8 +468,12 @@ class HfScaleSource:
             data_size = int(getattr(f, "size", 0) or (getattr(f, "lfs", None) and f.lfs.size) or 0)
             vpaths, vsize = [], 0
             if self.video_path_tmpl and self.video_keys:
+                # Supply every placeholder name used across codebase versions so the
+                # template resolves whether it is v3.0 (chunk_index/file_index) or
+                # v2.0 (episode_chunk/episode_index). str.format ignores extra keys.
+                idx = dict(chunk_index=chunk, file_index=fi, episode_chunk=chunk, episode_index=fi)
                 vpaths = [
-                    self.video_path_tmpl.format(video_key=k, chunk_index=chunk, file_index=fi)
+                    self.video_path_tmpl.format(video_key=k, **idx)
                     for k in self.video_keys
                 ]
                 for pi in self.api.get_paths_info(self.repo, vpaths, repo_type="dataset", revision=self.revision):
@@ -490,27 +498,126 @@ class HfScaleSource:
         return _dir_size(dest)
 
 
+# Episodes sampled to build a source-specific calibration when the dev-source
+# calibration's signal schema does not match the source (see _resolve_calibration).
+_CALIB_SAMPLE_UNITS = 15
+
+
+def _source_signal_dims(info: dict) -> tuple[int, int]:
+    """(concat [state|action] dims, action dims) from a dataset's meta/info.json."""
+    feats = info.get("features", {})
+
+    def _dim(name: str) -> int:
+        shape = feats.get(name, {}).get("shape") or []
+        return int(shape[0]) if shape else 0
+
+    action_dim = _dim("action")
+    return _dim("observation.state") + action_dim, action_dim
+
+
+def _calibration_fits(calib: Calibration, concat_dim: int, action_dim: int) -> bool:
+    """True if a calibration's per-dim vectors match this source's signal widths."""
+    return len(calib.jerk_center) == concat_dim and len(calib.action_center) == action_dim
+
+
+def _calibrate_from_source(source: "HfScaleSource", source_id: str, anomaly_percentile: float) -> Calibration:
+    """Build a signal calibration from a small sample of the source's OWN episodes.
+
+    Used when the dev-source calibration's schema doesn't match this source (a different
+    embodiment representation, e.g. droid-100 joint-space 7+7 vs the cartesian 8+7 slice).
+    Only the state/action parquet is pulled (never the videos — calibration ignores them),
+    into a temp dir OUTSIDE data_root so it never counts against the storage budget; the dir
+    is removed afterwards.
+    """
+    from huggingface_hub import hf_hub_download
+
+    tmp = Path(tempfile.mkdtemp(prefix=f"rlde-calib-{source_id}-"))
+    try:
+        # Enumerate data parquets directly (lazy tree walk) rather than via list_units(),
+        # which would make a per-unit network call to size the videos we don't need here.
+        tree = source.api.list_repo_tree(
+            source.repo, path_in_repo="data", repo_type="dataset",
+            recursive=True, revision=source.revision,
+        )
+        pulled = 0
+        for f in tree:
+            if type(f).__name__ != "RepoFile" or not f.path.endswith(".parquet"):
+                continue
+            try:
+                hf_hub_download(
+                    source.repo, f.path, repo_type="dataset",
+                    revision=source.revision, local_dir=str(tmp),
+                )
+            except Exception:
+                continue  # skip a unit whose parquet is momentarily unavailable
+            pulled += 1
+            if pulled >= _CALIB_SAMPLE_UNITS:
+                break
+        return calibrate_local(tmp, source=source_id, anomaly_percentile=anomaly_percentile)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _resolve_calibration(
+    source: "HfScaleSource", source_id: str, root: Path, gates: QualityGates,
+) -> Calibration:
+    """Pick a calibration whose signal schema matches ``source``.
+
+    Prefers the dev-source artifact (the documented `calibrate_from` design). If its schema
+    doesn't fit this source, falls back to a cached per-source calibration, and only then
+    builds a fresh one from the source's own episodes — see docs/verification.md Step 8.
+    """
+    concat_dim, action_dim = _source_signal_dims(source.info)
+    dev_path = root / "calibration" / f"{gates.signal.calibrate_from or source_id}.json"
+    if not dev_path.exists():
+        raise FileNotFoundError(
+            f"calibration artifact {dev_path} not found — run `make demo SOURCE=droid-100` first "
+            "so thresholds are calibrated from the dev source."
+        )
+    dev_calib = Calibration.from_file(dev_path)
+    if _calibration_fits(dev_calib, concat_dim, action_dim):
+        return dev_calib
+
+    src_path = root / "calibration" / f"{source_id}.json"
+    if src_path.exists():
+        cached = Calibration.from_file(src_path)
+        if _calibration_fits(cached, concat_dim, action_dim):
+            log_event("calibration_loaded", source=source_id, artifact=str(src_path), scope="source-specific")
+            return cached
+
+    log_event(
+        "calibration_schema_mismatch", source=source_id, dev_calibration=str(dev_path),
+        expected_jerk_dims=concat_dim, got_jerk_dims=len(dev_calib.jerk_center),
+        note="dev-source schema differs from this source; recalibrating from source sample",
+    )
+    calib = _calibrate_from_source(source, source_id, gates.signal.anomaly_percentile)
+    calib.to_file(src_path)
+    log_event(
+        "calibration_built", source=source_id, artifact=str(src_path),
+        n_frames=calib.n_frames, sample_units=_CALIB_SAMPLE_UNITS, scope="source-specific",
+    )
+    return calib
+
+
 def run_hf_scale(
     source_id: str, *, data_root: str | Path = "./data", engine: str = "spark",
     catalog_backend: str = "postgres", catalog_dsn: str | None = None, max_units: int | None = None,
+    budget_gb: float | None = None,
 ) -> ScaleReport:
     """Real DROID-slice scale run (Ubuntu). Requires the calibrate_from artifact to exist
-    (produced by an earlier droid-100 `make demo`)."""
+    (produced by an earlier droid-100 `make demo`); if that artifact's signal schema does
+    not match this source, a source-specific calibration is built and cached instead."""
     root = Path(data_root)
     cfg = load_sources("config/sources.yaml")
     src = cfg.get(source_id)
     gates = load_quality_gates()
-    calib_path = root / "calibration" / f"{gates.signal.calibrate_from or source_id}.json"
-    if not calib_path.exists():
-        raise FileNotFoundError(
-            f"calibration artifact {calib_path} not found — run `make demo SOURCE=droid-100` first "
-            "so thresholds are calibrated from the dev source."
-        )
-    calibration = Calibration.from_file(calib_path)
+    source = HfScaleSource(src.hf_repo, src.revision)
+    calibration = _resolve_calibration(source, source_id, root, gates)
     return run_scale(
-        HfScaleSource(src.hf_repo, src.revision),
+        source,
         scale_id=source_id, dataset_version=f"v0.1.0-{source_id}",
-        data_root=root, budget_gb=cfg.storage_budget_gb, gates=gates, calibration=calibration,
+        data_root=root, budget_gb=budget_gb if budget_gb is not None else cfg.storage_budget_gb,
+        gates=gates, calibration=calibration,
         engine=engine, catalog_backend=catalog_backend, catalog_dsn=catalog_dsn,
         max_units=max_units, hf_repo=src.hf_repo, license=src.license,
     )
@@ -525,11 +632,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--engine", choices=["spark", "local"], default="local")
     p.add_argument("--catalog-backend", choices=["postgres", "sqlite"], default="sqlite")
     p.add_argument("--max-units", type=int, default=None, help="stop after N new units (quick guard-trip confirmation)")
+    p.add_argument("--budget-gb", type=float, default=None,
+                   help="override storage_budget_gb from config; lower it for a fast bounded proof "
+                        "(the invariant needs total_processed > budget)")
     args = p.parse_args(argv)
 
     if args.source and not args.synthetic:
         report = run_hf_scale(args.source, data_root=args.data_root, engine=args.engine,
-                              catalog_backend=args.catalog_backend, max_units=args.max_units)
+                              catalog_backend=args.catalog_backend, max_units=args.max_units,
+                              budget_gb=args.budget_gb)
     else:
         report = run_synthetic_scale(args.data_root, seed=args.seed)
     d = report.as_dict()
