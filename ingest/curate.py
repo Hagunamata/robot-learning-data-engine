@@ -1,16 +1,9 @@
-"""Curation + eviction (M4): write passing episodes to curated, then evict raw.
+"""Curation + eviction: write passing episodes to curated, then evict raw.
 
-This closes the process-and-evict loop (docs/01-conception.md §5): after the signal
-gates decide which episodes pass, their frames are written to ``data/curated/<id>/``
-and the raw acquired copy under ``data/raw/<id>/`` is deleted via the storage guard,
-freeing budget for the next batch. Per-batch metrics (gate pass-rate, counts, storage)
-are logged for the dashboard/catalog.
-
-v3.0 note: episodes are aggregated per file, so curation *filters* the data parquet to
-the passing ``episode_index`` set and updates ``meta/info.json`` counts. Videos are
-copied as-is (not re-segmented to drop failed episodes' footage) — a documented M4
-simplification; the curated ``meta`` records which episodes are valid. Production would
-re-segment video with ffmpeg.
+v3.0 episodes are aggregated per file, so curation filters the data parquet to the
+passing ``episode_index`` set and updates ``meta/info.json`` counts. Videos are copied
+as-is rather than re-segmented to drop failed episodes' footage; the curated ``meta``
+records which episodes are valid. Production would re-segment video with ffmpeg.
 """
 
 from __future__ import annotations
@@ -56,7 +49,6 @@ def curate_passing(raw_root: str | Path, curated_root: str | Path, passing: Iter
     (curated_root / "meta").mkdir(parents=True)
     (curated_root / "data" / "chunk-000").mkdir(parents=True)
 
-    # 1. Filter the aggregated data parquet to passing episodes.
     files = sorted((raw_root / "data").rglob("*.parquet"))
     table = pa.concat_tables([pq.read_table(f) for f in files])
     ep = np.asarray(table.column("episode_index").to_pylist())
@@ -64,7 +56,6 @@ def curate_passing(raw_root: str | Path, curated_root: str | Path, passing: Iter
     filtered = table.filter(pa.array(mask.tolist(), type=pa.bool_()))
     pq.write_table(filtered, curated_root / "data" / "chunk-000" / "file-000.parquet")
 
-    # 2. Copy/patch meta.
     info = json.loads((raw_root / "meta" / "info.json").read_text(encoding="utf-8"))
     info["total_episodes"] = len(passing)
     info["total_frames"] = filtered.num_rows
@@ -77,7 +68,6 @@ def curate_passing(raw_root: str | Path, curated_root: str | Path, passing: Iter
     if ep_meta.exists():
         shutil.copytree(ep_meta, curated_root / "meta" / "episodes")
 
-    # 3. Copy videos as-is (documented: not re-segmented).
     videos = raw_root / "videos"
     if videos.exists():
         shutil.copytree(videos, curated_root / "videos")
@@ -94,8 +84,8 @@ def get_or_build_calibration(
 ) -> Calibration:
     """Load the persisted calibration artifact, or build it from the current raw data.
 
-    The artifact is keyed by `calibrate_from` and reused across sources (e.g. calibrate
-    on droid-100 once, reuse when gating droid-slice — droid-100 is evicted by then).
+    The artifact is keyed by `calibrate_from` and reused across sources (calibrate on
+    droid-100 once, reuse when gating droid-slice — droid-100 is evicted by then).
     """
     artifact = data_root / "calibration" / f"{calibrate_from}.json"
     if artifact.exists():
@@ -140,7 +130,7 @@ def run_validation(
     gates = gates or load_quality_gates()
     root = Path(data_root)
 
-    # M3 — schema gate. If it quarantines/drops, there is nothing to signal-gate.
+    # If the schema gate quarantines/drops, there is nothing to signal-gate.
     schema = ingest_source(source_id, data_root=root, gates=gates)
     if schema.action != "ready":
         log_event("validation_stopped", source=source_id, schema_action=schema.action)
@@ -148,7 +138,6 @@ def run_validation(
 
     raw_root = root / "raw" / source_id
 
-    # M4 — calibrate (once, reused) then signal-gate.
     calibrate_from = gates.signal.calibrate_from or source_id
     calibration = get_or_build_calibration(
         calibrate_from, source_id, raw_root, root, gates.signal.anomaly_percentile
@@ -166,7 +155,6 @@ def run_validation(
         gate_pass_rate=report.pass_rate,
     )
 
-    # Curate the passing episodes.
     curated_root = root / "curated" / source_id
     stats = curate_passing(raw_root, curated_root, passing)
     guard.log_usage("curated", source=source_id, curated_episodes=stats["episodes"], curated_frames=stats["frames"])
@@ -174,12 +162,10 @@ def run_validation(
     if failing:
         _write_episode_rejects(root / "quarantine" / source_id, failing)
 
-    # Evict the raw copy — process-and-evict.
     freed = guard.evict(raw_root)
     log_event("evicted_raw", source=source_id, freed_bytes=freed)
     guard.log_usage("final", source=source_id)
 
-    # Per-batch metrics for the dashboard/catalog.
     log_event(
         "batch_metrics",
         source=source_id,

@@ -1,20 +1,4 @@
-"""Schema quality gate (PyArrow) for a LeRobot dataset.
-
-Validates that an acquired dataset conforms to the required LeRobot schema *before*
-the signal gates (M4) and curation run. Schema is a dataset-level property (every
-episode shares one `meta/info.json`), so this gate accepts or quarantines the dataset
-as a whole; per-episode signal quality is the separate M4 concern.
-
-Engine decision (M3): this is PyArrow, not Spark — it is a feature-existence/dtype
-check, the "~50-line PyArrow job" the brief points at. Spark is reserved for the M4
-signal gates. See docs/02-development.md (M3 decision record).
-
-Verified against lerobot/droid_100 meta/info.json (v3.0):
-  - low-dim features (observation.state, action, task_index, ...) are PARQUET COLUMNS
-  - image features (observation.images.*) are declared in info.json but stored as
-    separate .mp4 video files, NOT parquet columns
-  - the language instruction is `task_index` (int) resolved via meta/tasks.parquet
-"""
+"""Schema quality gate (PyArrow) for a LeRobot dataset."""
 
 from __future__ import annotations
 
@@ -72,12 +56,10 @@ def validate_schema(dataset_root: str | Path, gates: QualityGates) -> SchemaResu
     codebase_version = info.get("codebase_version")
     reasons: list[str] = []
 
-    # 1. Required low-dim features must be declared.
     for rf in gates.schema.required_features:
         if rf not in features:
             reasons.append(f"missing required feature '{rf}'")
 
-    # 2. At least one image/camera stream.
     if gates.schema.require_at_least_one_image:
         if not any(k in features for k in gates.schema.image_keys_any_of):
             reasons.append(
@@ -85,13 +67,12 @@ def validate_schema(dataset_root: str | Path, gates: QualityGates) -> SchemaResu
                 f"{gates.schema.image_keys_any_of})"
             )
 
-    # 3. Language instruction present and resolvable.
     if gates.annotation.require_language_instruction and not _language_ok(features, root):
         reasons.append("no resolvable language instruction (task_index+tasks table or language_instruction)")
 
-    # 4. Cross-check: non-image required features must actually be columns in the data
-    #    parquet (guards against an info.json that over-declares). Image features are
-    #    video files, not columns, so they are excluded from this check.
+    # Guard against an info.json that over-declares: non-image required features must
+    # actually be columns in the data parquet. Image features are video files, not
+    # columns, so they are excluded here.
     data_parquet = _first_data_parquet(root)
     if data_parquet is None:
         reasons.append("no data parquet found under data/")

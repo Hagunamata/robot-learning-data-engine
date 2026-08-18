@@ -1,11 +1,4 @@
-"""Load and parse config/quality_gates.yaml into typed objects.
-
-Only the schema/annotation/policy sections are typed here (used by M3). The `signal`
-section is consumed by the Spark signal gates in M4 and is passed through as a raw dict
-for now.
-
-See CLAUDE_CODE_BRIEF.md §6.2 and docs/01-conception.md §4.2.
-"""
+"""Load and parse config/quality_gates.yaml into typed objects."""
 
 from __future__ import annotations
 
@@ -33,16 +26,11 @@ class AnnotationGates:
 
 @dataclass
 class SignalGates:
-    """Per-episode signal-quality thresholds (M4, decision A). DRAFT until tuned.
+    """Robust percentile + anomalous-frame-fraction gate: calibrate a per-signal frame score threshold at `anomaly_percentile` over `calibrate_from`, then fail an episode only if the fraction of frames exceeding it is above `max_anomalous_frame_ratio`."""
 
-    Robust percentile + anomalous-frame-fraction gate: calibrate a per-signal frame
-    score threshold at `anomaly_percentile` over `calibrate_from`, then fail an episode
-    only if the fraction of frames exceeding it is above `max_anomalous_frame_ratio`.
-    """
-
-    calibrate_from: Optional[str] = None       # source id to calibrate thresholds from
-    anomaly_percentile: float = 99.9           # frame-score threshold percentile
-    max_anomalous_frame_ratio: float = 0.01    # fail if >1% of frames are anomalous
+    calibrate_from: Optional[str] = None
+    anomaly_percentile: float = 99.9
+    max_anomalous_frame_ratio: float = 0.01
     max_missing_frame_ratio: float = 0.02
 
 

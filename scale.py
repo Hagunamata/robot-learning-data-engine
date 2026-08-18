@@ -1,14 +1,6 @@
-"""Storage-aware scale runner (M6) — batched acquire -> process -> evict -> repeat.
+"""Storage-aware scale runner: batched acquire -> process -> evict -> repeat, keeping peak raw on disk under budget while arbitrarily much data streams through.
 
-Proves the project's headline invariant, measured (not narrated):
-
-    peak concurrent on-disk RAW  <  storage_budget_gb        (bounded working set)
-    total bytes processed        >> storage_budget_gb        (streamed through)
-
-The loop pulls one *unit* (a chunk = data file + its videos) at a time, gates its
-episodes, appends passing ones to `curated/`, commits the catalog row, and only THEN
-evicts the raw copy — so raw never exceeds the budget while arbitrarily much data flows
-through. Correctness rules (see the M6 spec in docs/02-development.md):
+The five correctness rules enforced by the loop below:
 
   1. Pre-admission guard: (raw on disk + estimated next unit) must fit budget*headroom;
      a unit larger than that is refused rather than overshooting.
@@ -20,10 +12,6 @@ through. Correctness rules (see the M6 spec in docs/02-development.md):
      under a small sub-cap; never the full raw unit.
   5. Peak is measured, not assumed: the raw directory size is sampled after every fetch
      and the observed maximum is reported.
-
-Two sources implement the same protocol: `SyntheticScaleSource` (seeded, local,
-network-free — the reproducible proof) and `HfScaleSource` (real DROID slice, run on
-Ubuntu). Calibration comes from the small dev source (droid-100), never the slice.
 """
 
 from __future__ import annotations
@@ -51,14 +39,11 @@ from spark.jobs.signal_gates import Calibration, EpisodeVerdict, calibrate_local
 _QUARANTINE_SAMPLE_FRAMES = 5
 
 
-# --- source protocol -------------------------------------------------------
 @dataclass
 class Unit:
-    """One acquirable chunk of a source."""
-
     id: str
     est_bytes: int
-    payload: object  # source-specific handle used by fetch()
+    payload: object
 
 
 class ScaleSource(Protocol):
@@ -69,7 +54,6 @@ class ScaleSource(Protocol):
         """Materialize `unit` as a mini LeRobot dataset under `dest`; return bytes written."""
 
 
-# --- helpers ---------------------------------------------------------------
 def _dir_size(path: Path) -> int:
     return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file())
 
@@ -104,7 +88,6 @@ def _append_curated(curated_root: Path, batch_root: Path, unit_id: str, passing:
     out_dir.mkdir(parents=True, exist_ok=True)
     pq.write_table(kept, out_dir / "file-000.parquet")
 
-    # Copy meta once (first unit).
     if not (curated_root / "meta" / "info.json").exists():
         (curated_root / "meta").mkdir(parents=True, exist_ok=True)
         for name in ("info.json", "tasks.parquet", "stats.json"):
@@ -126,7 +109,6 @@ def _quarantine_failures(
         for ep, reasons in sorted(failures.items()):
             fh.write(json.dumps({"episode_index": int(ep), "reasons": reasons}) + "\n")
 
-    # Tiny sample only, and only while under the sub-cap.
     if _dir_size(quarantine_root) >= subcap_bytes:
         return
     files = sorted((batch_root / "data").rglob("*.parquet"))
@@ -143,7 +125,6 @@ def _quarantine_failures(
             pq.write_table(sample, sdir / f"episode-{episode}.parquet")
 
 
-# --- report ----------------------------------------------------------------
 @dataclass
 class ScaleReport:
     budget_bytes: int
@@ -178,7 +159,6 @@ class ScaleReport:
         return d
 
 
-# --- the runner ------------------------------------------------------------
 def run_scale(
     source: ScaleSource,
     *,
@@ -203,7 +183,7 @@ def run_scale(
     quarantine_root = root / "quarantine" / dataset_version
     manifest_path = root / "manifest" / f"{dataset_version}.json"
 
-    guard = StorageGuard(raw_root, budget_gb=budget_gb)  # RAW-only accounting
+    guard = StorageGuard(raw_root, budget_gb=budget_gb)
     budget_bytes = guard.budget_bytes
     subcap_bytes = int(budget_bytes * quarantine_subcap_frac)
     writer = CatalogWriter(catalog_backend, catalog_dsn)
@@ -243,10 +223,9 @@ def run_scale(
 
         batch_dir = raw_root / unit.id
         actual = source.fetch(unit, batch_dir)
-        peak = max(peak, guard.used_bytes())  # Rule 5: measure right after fetch
+        peak = max(peak, guard.used_bytes())  # Rule 5
         total_processed += actual
 
-        # Process: gate this unit's episodes.
         report = run_signal_gates(batch_dir, gates.signal, calibration, engine=engine)
         passing = {v.episode_index for v in report.verdicts if v.passed}
         failing = {v.episode_index: v.reasons for v in report.verdicts if not v.passed}
@@ -266,7 +245,7 @@ def run_scale(
             gate_pass_rate=round(ep_passed / ep_total, 4) if ep_total else None,
             notes=f"scale run; {ep_passed}/{ep_total} episodes passed",
         )
-        writer.record_version(rec)  # committed BEFORE eviction
+        writer.record_version(rec)  # committed before eviction
 
         processed_units.add(unit.id)
         new_units += 1
@@ -303,7 +282,6 @@ def run_scale(
     return result
 
 
-# --- synthetic source (seeded, local, network-free) ------------------------
 def _list_col(arr: np.ndarray) -> pa.Array:
     return pa.array([row.tolist() for row in arr], type=pa.list_(pa.float32()))
 
@@ -312,11 +290,7 @@ def make_synthetic_store(
     store: Path, *, n_chunks: int = 8, eps_per_chunk: int = 3, frames: int = 1200,
     bad_every: int = 7, seed: int = 0,
 ) -> Path:
-    """Generate a multi-chunk v3.0-shaped dataset (one data file per chunk).
-
-    Every `bad_every`-th global episode gets a jerk spike so it fails the gates
-    (exercises quarantine). Deterministic given `seed`.
-    """
+    """Generate a deterministic multi-chunk v3.0-shaped dataset; every `bad_every`-th episode gets a jerk spike so it fails the gates."""
     store = Path(store)
     if store.exists():
         shutil.rmtree(store)
@@ -406,14 +380,13 @@ def run_synthetic_scale(
     data_root: str | Path, *, seed: int = 0, catalog_dsn: str | None = None,
     n_chunks: int = 8, eps_per_chunk: int = 3, frames: int = 1200,
 ) -> ScaleReport:
-    """Seeded synthetic proof. Budget is set to total/4 so total processed = 4x budget
-    while each unit (= total/n_chunks) fits comfortably under budget."""
+    """Seeded synthetic proof; budget is set to total/4 so total processed is ~4x budget while each unit fits comfortably under budget."""
     root = Path(data_root)
     store = make_synthetic_store(root / "_synth_store", n_chunks=n_chunks,
                                  eps_per_chunk=eps_per_chunk, frames=frames, seed=seed)
     total = _dir_size(store / "data")
-    budget_gb = (total / 4) / BYTES_PER_GB  # total processed will be ~4x the budget
-    gates = load_quality_gates()  # real gate thresholds (config/quality_gates.yaml)
+    budget_gb = (total / 4) / BYTES_PER_GB
+    gates = load_quality_gates()
     return run_scale(
         SyntheticScaleSource(store),
         scale_id="synthetic", dataset_version="v0.0.0-synthetic-scale",
@@ -424,16 +397,13 @@ def run_synthetic_scale(
     )
 
 
-# --- real Hugging Face source (run on Ubuntu — see docs/02-development.md) --------
 class HfScaleSource:
     """Serves each chunk of a Hub LeRobot dataset as a fetchable unit.
 
-    Perf note (the "gotchas at scale" fix): enumeration is scoped to the ``data`` prefix
-    and iterated lazily, so we never materialize the full repo tree (a full-DROID mirror
-    has thousands of video files — listing all of them recursively is what hung in M2).
-    Per-unit video sizes/paths are resolved from the ``video_path`` template + a targeted
-    ``get_paths_info`` call, not a recursive listing. Path templates are read from the
-    dataset's own ``info.json``, so this adapts to v2.0 (per-episode) or v3.0 (aggregated).
+    Enumeration is scoped to the ``data`` prefix and iterated lazily so we never materialize
+    the full repo tree (a full-DROID mirror has thousands of video files). Per-unit video
+    sizes/paths are resolved from the ``video_path`` template + a targeted ``get_paths_info``
+    call, not a recursive listing.
     """
 
     def __init__(self, hf_repo: str, revision: str | None = None) -> None:
@@ -498,8 +468,6 @@ class HfScaleSource:
         return _dir_size(dest)
 
 
-# Episodes sampled to build a source-specific calibration when the dev-source
-# calibration's signal schema does not match the source (see _resolve_calibration).
 _CALIB_SAMPLE_UNITS = 15
 
 
@@ -521,14 +489,7 @@ def _calibration_fits(calib: Calibration, concat_dim: int, action_dim: int) -> b
 
 
 def _calibrate_from_source(source: "HfScaleSource", source_id: str, anomaly_percentile: float) -> Calibration:
-    """Build a signal calibration from a small sample of the source's OWN episodes.
-
-    Used when the dev-source calibration's schema doesn't match this source (a different
-    embodiment representation, e.g. droid-100 joint-space 7+7 vs the cartesian 8+7 slice).
-    Only the state/action parquet is pulled (never the videos — calibration ignores them),
-    into a temp dir OUTSIDE data_root so it never counts against the storage budget; the dir
-    is removed afterwards.
-    """
+    """Build a signal calibration from a small sample of the source's own episodes; only the state/action parquet is pulled (not the videos, which calibration ignores) into a temp dir outside data_root so it never counts against the storage budget."""
     from huggingface_hub import hf_hub_download
 
     tmp = Path(tempfile.mkdtemp(prefix=f"rlde-calib-{source_id}-"))
@@ -561,12 +522,7 @@ def _calibrate_from_source(source: "HfScaleSource", source_id: str, anomaly_perc
 def _resolve_calibration(
     source: "HfScaleSource", source_id: str, root: Path, gates: QualityGates,
 ) -> Calibration:
-    """Pick a calibration whose signal schema matches ``source``.
-
-    Prefers the dev-source artifact (the documented `calibrate_from` design). If its schema
-    doesn't fit this source, falls back to a cached per-source calibration, and only then
-    builds a fresh one from the source's own episodes — see docs/verification.md Step 8.
-    """
+    """Pick a calibration whose signal schema matches ``source``: prefer the dev-source artifact, else a cached per-source calibration, and only then build a fresh one from the source's own episodes."""
     concat_dim, action_dim = _source_signal_dims(source.info)
     dev_path = root / "calibration" / f"{gates.signal.calibrate_from or source_id}.json"
     if not dev_path.exists():
@@ -604,9 +560,7 @@ def run_hf_scale(
     catalog_backend: str = "postgres", catalog_dsn: str | None = None, max_units: int | None = None,
     budget_gb: float | None = None,
 ) -> ScaleReport:
-    """Real DROID-slice scale run (Ubuntu). Requires the calibrate_from artifact to exist
-    (produced by an earlier droid-100 `make demo`); if that artifact's signal schema does
-    not match this source, a source-specific calibration is built and cached instead."""
+    """Real DROID-slice scale run; requires the calibrate_from artifact to exist, else builds and caches a source-specific calibration when its schema does not match."""
     root = Path(data_root)
     cfg = load_sources("config/sources.yaml")
     src = cfg.get(source_id)

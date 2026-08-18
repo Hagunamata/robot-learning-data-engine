@@ -1,15 +1,8 @@
 """Storage guard — enforces the local disk budget and drives process-and-evict.
 
-The guard measures the actual on-disk footprint under ``data_root`` and refuses any
-acquisition that would push it past the configured budget. After a batch is curated
-(M4), its raw copy is evicted so the budget frees up for the next batch. The running
-disk-used-vs-budget figure is logged at every stage.
-
-Design note: the budget is treated as binary GiB (1 GB = 1024**3 bytes) to match how
-disk capacity is actually reported. Usage is measured from disk (ground truth), not a
-separate ledger, so it stays correct even if a download is interrupted.
-
-See docs/01-conception.md §5.
+The budget is treated as binary GiB (1 GB = 1024**3 bytes) to match how disk capacity
+is actually reported. Usage is measured from disk (ground truth), not a separate ledger,
+so it stays correct even if a download is interrupted.
 """
 
 from __future__ import annotations
@@ -19,7 +12,7 @@ from pathlib import Path
 
 from .logging_utils import log_event
 
-BYTES_PER_GB = 1024 ** 3  # binary GiB
+BYTES_PER_GB = 1024 ** 3
 
 
 class StorageBudgetExceeded(RuntimeError):

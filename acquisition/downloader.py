@@ -1,17 +1,8 @@
 """Selective, file-granular acquisition from the Hugging Face Hub, gated by the guard.
 
-Design record (M2): DROID datasets in LeRobot **v3.0** aggregate many episodes into a
-single file — data as ``data/chunk-{c}/file-{f}.parquet`` and per-camera video as
-``videos/{video_key}/chunk-{c}/file-{f}.mp4`` (verified from lerobot/droid_100
-meta/info.json, 2026-07-22). A single episode's frames/video cannot be pulled in
-isolation, so the **atomic acquisition unit is the file**, not the episode. This still
-satisfies process-and-evict (evict raw after curation; process more than fits) — just
-at file granularity. Episode boundaries live in ``meta/`` and are used by ingest (M3).
-
-The version is detected from the source's own ``meta/info.json`` at runtime
-(``detect_codebase_version``), so a v2.0 (per-episode) source would also work here.
-
-See docs/01-conception.md §4.1/§5 and docs/02-development.md (M2).
+DROID datasets in LeRobot v3.0 aggregate many episodes into a single file, so the atomic
+acquisition unit is the file, not the episode. The version is detected from the source's
+own meta/info.json at runtime, so a v2.0 (per-episode) source would also work here.
 """
 
 from __future__ import annotations
@@ -71,11 +62,8 @@ def _size_of(repo_file) -> int:
 def acquire(source: Source, guard: StorageGuard, *, dry_run: bool = False) -> AcquireSummary:
     """Stream ``source``'s files into ``data/raw/<id>/`` under the storage guard.
 
-    Files are pulled in meta -> data -> video order; before each file the guard checks
-    that it fits within budget, and acquisition **stops** (does not exceed) the moment
-    the next file would not fit. Nothing is evicted here — eviction happens after
-    curation in M4. In ``dry_run`` mode no data-file is written; the plan and projected
-    footprint are logged instead.
+    Files are pulled meta -> data -> video; acquisition stops before the first file that
+    would exceed the budget rather than overshooting. In ``dry_run`` no data is written.
     """
     api = HfApi()
     dest = guard.data_root / "raw" / source.id
@@ -89,8 +77,7 @@ def acquire(source: Source, guard: StorageGuard, *, dry_run: bool = False) -> Ac
         max_episodes=source.max_episodes,
     )
 
-    # 1. Detect the real format from the source's own info.json (authoritative).
-    #    Downloaded to the HF cache (not data_root), so it never counts against budget.
+    # Downloaded to the HF cache (not data_root), so it never counts against budget.
     info_local = hf_hub_download(
         source.hf_repo, "meta/info.json", repo_type="dataset", revision=source.revision
     )
@@ -113,7 +100,6 @@ def acquire(source: Source, guard: StorageGuard, *, dry_run: bool = False) -> Ac
             note="proceeding with the detected version (detect_codebase_version)",
         )
 
-    # 2. Enumerate files with sizes, ordered meta -> data -> video.
     tree = api.list_repo_tree(
         source.hf_repo, repo_type="dataset", recursive=True, revision=source.revision
     )
@@ -121,11 +107,10 @@ def acquire(source: Source, guard: StorageGuard, *, dry_run: bool = False) -> Ac
     order = {_META: 0, _DATA: 1, _VIDEO: 2, _OTHER: 3}
     files.sort(key=lambda f: (order[_classify(f.path)], f.path))
 
-    # 3. Pull each file if it fits; stop before exceeding the budget.
-    #    Gating uses a PROJECTED cumulative total (baseline on disk + accepted file
-    #    sizes from Hub metadata). This is deterministic and lets --dry-run faithfully
-    #    predict the stop point without downloading. Real-mode logging still reports
-    #    true on-disk usage via guard.log_usage() (which re-measures the disk).
+    # Gating uses a PROJECTED cumulative total (baseline on disk + accepted file sizes
+    # from Hub metadata). This is deterministic and lets --dry-run faithfully predict the
+    # stop point without downloading. Real-mode logging still reports true on-disk usage
+    # via guard.log_usage() (which re-measures the disk).
     baseline = guard.used_bytes()
     pulled = 0
     bytes_pulled = 0

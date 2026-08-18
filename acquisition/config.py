@@ -1,9 +1,4 @@
-"""Load and parse config/sources.yaml.
-
-Keeps the config contract (CLAUDE_CODE_BRIEF.md §6.1) in one typed place so the rest
-of acquisition never touches raw YAML. Values are the human's (M1); repo IDs and
-licenses were verified against the live sources.
-"""
+"""Load and parse config/sources.yaml into typed objects."""
 
 from __future__ import annotations
 
@@ -23,10 +18,10 @@ class Source:
     id: str
     hf_repo: str
     role: str = ""
-    codebase_version: Optional[str] = None  # expected LeRobot format; detected at runtime
-    revision: Optional[str] = None           # git ref on the Hub; None => default branch
-    max_episodes: Optional[int] = None       # a ceiling; the storage guard is the real limit
-    license: Optional[str] = None            # cited basis (official DROID = CC-BY-4.0)
+    codebase_version: Optional[str] = None
+    revision: Optional[str] = None
+    max_episodes: Optional[int] = None
+    license: Optional[str] = None
     license_mirror_stated: Optional[str] = None
     enabled: bool = False
 

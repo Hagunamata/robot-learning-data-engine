@@ -1,11 +1,4 @@
-"""CLI entry for the validation stage (canonical ingest + quality gates).
-
-    python -m ingest --source droid-100 [--engine spark|local] [--schema-only]
-
-Full stage (default): schema gate (M3) -> signal gates -> curate passing -> evict raw
-(M4). `--schema-only` stops after the schema gate. Operates on data acquired by M2
-(data/raw/<id>). Wired to `make validate`. See docs/02-development.md (M3/M4).
-"""
+"""CLI entry for the validation stage (canonical ingest + quality gates)."""
 
 from __future__ import annotations
 

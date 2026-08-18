@@ -1,16 +1,4 @@
-"""Canonical ingest (M3): confirm a source is in LeRobot format, then schema-gate it.
-
-For the DROID sources the raw data is *already* LeRobot (v3.0 / v2.0), so canonical
-ingest here is a verification + schema-validation step rather than a format
-conversion. Non-LeRobot sources (future OXE; synthetic episodes in M5) will do real
-conversion at this stage — that path raises NotImplementedError for now.
-
-On schema failure the dataset is routed per the `on_fail` policy (quarantine keeps a
-rejects log; drop deletes it). Writing passing episodes to data/curated/ and evicting
-the raw copy happens in M4 — this stage only accepts or rejects.
-
-See docs/01-conception.md §4.2 and docs/02-development.md (M3).
-"""
+"""Canonical ingest: confirm a source is in LeRobot format, then schema-gate it."""
 
 from __future__ import annotations
 
@@ -72,7 +60,6 @@ def ingest_source(
         log_event("ingest_error", source=source_id, error=f"no acquired data at {raw_root}")
         return IngestResult(source_id, False, None, ["raw data not found — run acquisition first"], "error")
 
-    # Canonicalize: DROID is already LeRobot; non-LeRobot conversion is future work.
     if not _is_lerobot(raw_root):
         raise NotImplementedError(
             f"{source_id}: non-LeRobot source conversion is not implemented yet "
@@ -93,7 +80,6 @@ def ingest_source(
         log_event("ingest_ready", source=source_id, note="passed schema gate; awaits signal gates (M4)")
         return IngestResult(source_id, True, result.codebase_version, [], "ready")
 
-    # Schema failed → apply policy.
     if gates.on_fail == "drop":
         shutil.rmtree(raw_root)
         log_event("ingest_dropped", source=source_id, reasons=result.reasons)

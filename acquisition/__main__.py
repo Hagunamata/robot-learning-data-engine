@@ -1,10 +1,4 @@
-"""CLI entry for acquisition.  `python -m acquisition --source droid-100 [--dry-run]`.
-
-Wired to `make ingest`. Loads config/sources.yaml, builds the storage guard from the
-configured budget, and streams the chosen source under it.
-
-See docs/01-conception.md §4.1 and docs/02-development.md (M2).
-"""
+"""CLI entry for acquisition.  `python -m acquisition --source droid-100 [--dry-run]`."""
 
 from __future__ import annotations
 

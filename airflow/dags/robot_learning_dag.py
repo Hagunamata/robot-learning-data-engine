@@ -1,16 +1,4 @@
-"""End-to-end pipeline DAG (M5).
-
-Maps the pipeline stages to Airflow tasks (reused layout from the prior repo). The task
-callables reuse the SAME functions that `python -m pipeline` runs (docs/02-development.md
-M5), so `make demo` and the DAG execute identical logic — the DAG just adds scheduling,
-retries, and per-task logging/observability.
-
-    acquire >> validate >> catalog_real >> augment >> catalog_aug
-
-Runs on the Docker/Airflow runtime (needs airflow installed). `make demo` runs the same
-stages without Airflow for a one-command local demo. Config comes from the mounted repo
-(config/*.yaml); DATA_ROOT defaults to the compose-mounted ./data.
-"""
+"""End-to-end pipeline DAG: acquire >> validate >> catalog_real >> augment >> catalog_aug, reusing the same callables as `python -m pipeline`."""
 
 from __future__ import annotations
 
@@ -20,7 +8,6 @@ from datetime import datetime
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-# Stage building blocks (same code as the CLI pipeline).
 from acquisition.config import load_sources
 from acquisition.storage_guard import StorageGuard
 from catalog import CatalogWriter, build_record
@@ -91,7 +78,7 @@ with DAG(
     dag_id="robot_learning_data_engine",
     description="Acquire -> validate -> curate/evict -> catalog -> augment -> catalog.",
     start_date=datetime(2026, 1, 1),
-    schedule=None,          # triggered on demand (make demo / Airflow UI)
+    schedule=None,
     catchup=False,
     tags=["rlde", "batch"],
 ) as dag:

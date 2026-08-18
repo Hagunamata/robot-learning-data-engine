@@ -1,17 +1,4 @@
-"""Streamlit data-quality dashboard (M6) — reads the CATALOG directly.
-
-Per the locked decision: Streamlit reads the catalog (sqlite or Postgres) — the source
-of truth for dataset versions, gate pass-rate, and task distribution — and reads the
-scale manifests for peak-disk-vs-budget. Kibana is NOT used for these metrics (it stays
-for pipeline logs only).
-
-Run:
-    streamlit run dashboard/app.py            # sqlite (default: data/catalog.db)
-    RLDE_CATALOG_BACKEND=postgres streamlit run dashboard/app.py
-
-Config via env: RLDE_CATALOG_BACKEND (sqlite|postgres), RLDE_CATALOG_DB (sqlite path),
-RLDE_DATA_ROOT (for data/manifest/*.json). pandas ships with streamlit — no extra dep.
-"""
+"""Streamlit data-quality dashboard reading the catalog (sqlite/Postgres) and scale manifests."""
 
 from __future__ import annotations
 
@@ -85,7 +72,6 @@ if catalog.empty:
     st.warning("No catalog rows found. Run `make demo` (or the scale run) to populate the catalog.")
     st.stop()
 
-# --- Dataset versions -------------------------------------------------------
 st.subheader("Dataset versions & lineage")
 st.dataframe(
     catalog[["dataset_version", "source_id", "license", "episode_count", "frame_count", "gate_pass_rate", "notes"]],
@@ -93,14 +79,12 @@ st.dataframe(
     width="stretch",
 )
 
-# --- Gate pass-rate ---------------------------------------------------------
 col1, col2 = st.columns(2)
 with col1:
     st.subheader("Gate pass-rate by version")
     pr = catalog.dropna(subset=["gate_pass_rate"]).set_index("dataset_version")["gate_pass_rate"].astype(float)
     st.bar_chart(pr, width="stretch")
 
-# --- Task distribution ------------------------------------------------------
 with col2:
     st.subheader("Task distribution")
     version = st.selectbox("Version", catalog["dataset_version"].tolist())
@@ -113,7 +97,6 @@ with col2:
     else:
         st.info("No task distribution recorded for this version.")
 
-# --- Peak disk vs budget (scale runs) --------------------------------------
 st.subheader("Storage: peak concurrent raw vs budget (scale runs)")
 manifests = load_manifests()
 if not manifests:

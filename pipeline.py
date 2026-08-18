@@ -1,19 +1,4 @@
-"""End-to-end pipeline orchestrator (M5) — what `make demo` runs.
-
-Chains the stages built in M2-M5 on one source:
-
-    acquire (if raw absent) -> validate (schema + signal gates + curate + evict)
-      -> catalog v1 (real)
-      -> augment (synthetic for under-represented tasks) -> validate synthetic
-      -> merge real + synthetic -> catalog v2 (augmented)
-
-The Airflow DAG (airflow/dags/robot_learning_dag.py) wraps these same callables as
-tasks; running this module directly is the portable, JVM/Airflow-optional entry point.
-
-    python -m pipeline --source droid-100 --engine local --catalog-backend sqlite
-
-See docs/01-conception.md §3 and docs/02-development.md (M5).
-"""
+"""End-to-end pipeline orchestrator — what `make demo` runs."""
 
 from __future__ import annotations
 
@@ -109,7 +94,6 @@ def run_pipeline(
     writer = CatalogWriter(catalog_backend, catalog_dsn)
     log_event("pipeline_start", source=source, engine=engine, catalog_backend=catalog_backend, git_commit=git)
 
-    # 1. Acquire (skip if already present — e.g. re-runs, or dev machines with data staged).
     raw_root = root / "raw" / source
     if not raw_root.exists():
         from acquisition.downloader import acquire  # lazy: needs huggingface_hub
@@ -117,14 +101,12 @@ def run_pipeline(
     else:
         log_event("acquire_skipped", source=source, reason="raw already present")
 
-    # 2. Validate + curate + evict (M3/M4).
     vres = run_validation(source, guard, data_root=root, gates=gates, engine=engine)
     if vres.schema_action != "ready":
         log_event("pipeline_stopped", source=source, schema_action=vres.schema_action)
         return {"schema_action": vres.schema_action}
     curated = root / "curated" / source
 
-    # 3. Catalog the real version.
     rec_real = build_record(
         f"v0.1.0-{source}", source, curated,
         hf_repo=src.hf_repo, license=src.license, gate_pass_rate=vres.gate_pass_rate,
@@ -133,7 +115,6 @@ def run_pipeline(
     writer.record_version(rec_real)
     versions = [rec_real.dataset_version]
 
-    # 4. Augment under-represented tasks, gate the synthetic, merge, catalog v2.
     if do_augment:
         calib_path = root / "calibration" / f"{gates.signal.calibrate_from or source}.json"
         calibration = Calibration.from_file(calib_path)

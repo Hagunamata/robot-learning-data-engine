@@ -1,31 +1,15 @@
-"""Signal-quality gates (M4): jerk, action outliers, missing frames — per episode.
+"""Signal-quality gates: jerk, action outliers, missing frames — per episode.
 
-Engine decision (docs/02-development.md M3/M4): the per-episode metric maths lives in a
-**pure numpy core** (`compute_episode_metrics` / `evaluate`), trivially unit-testable
-with no JVM. Two engines feed it the same per-episode arrays:
+The per-episode metric maths lives in a pure numpy core (``compute_episode_metrics`` /
+``evaluate``). Two engines feed it the same per-episode arrays: ``run_spark`` (scale) and
+``run_local`` (dev/CI), which give identical results.
 
-  - ``run_spark``  — SparkSession + ``applyInPandas`` groupBy episode_index. Production /
-    scale engine (DROID slice at M6). Verified on Ubuntu (needs Java + pyspark).
-  - ``run_local``  — pyarrow + numpy, single process, for the tiny dev source and CI.
-    Identical results (same core).
-
-**Gate design — robust percentile + anomalous-frame fraction (M4 decision A).**
-Two earlier attempts failed on real DROID data (docs/02-development.md M4 records the
-numbers): within-episode z-score gave million-σ scores (still segments collapse the
-per-episode spread), and global mean+6σ still failed 99/100 (jerk is near-zero-peaked
-so its σ is tiny). The gate now:
-
-  1. **Calibrates** per-dim robust center/scale (median / MAD) over the ``calibrate_from``
-     corpus, and a per-signal frame-score **threshold** at a high percentile
-     (``anomaly_percentile``, e.g. 99.9). A frame's score is the max over dims of its
-     robust |z|.
-  2. **Gates** each episode on the *fraction* of frames whose score exceeds that
-     threshold: fail only if that fraction exceeds ``max_anomalous_frame_ratio``. A
-     single sharp frame no longer kills a long episode; concentrated anomalies do.
-
-Calibration is small JSON, persisted and reused across sources. DROID v3.0 aggregates
-many episodes per data file, so both engines group the ``data/`` parquet by
-``episode_index``; gates use the low-dim signals only (no video needed).
+Gate design — robust percentile + anomalous-frame fraction: calibrate per-dim robust
+center/scale (median / MAD) over the ``calibrate_from`` corpus and a per-signal
+frame-score threshold at a high percentile (a frame's score is the max over dims of its
+robust |z|), then fail an episode only when the fraction of frames exceeding that
+threshold is above ``max_anomalous_frame_ratio``. A single sharp frame no longer kills a
+long episode; concentrated anomalies do.
 """
 
 from __future__ import annotations
@@ -53,12 +37,7 @@ _MAD_TO_STD = 1.4826  # MAD -> std-equivalent for normal data
 # --- calibration -----------------------------------------------------------
 @dataclass
 class Calibration:
-    """Robust per-dim center/scale + percentile frame-score thresholds.
-
-    ``jerk_*`` are over the concatenated [state | action] signal dims; ``action_*`` are
-    over action dims. ``*_score_threshold`` is the ``anomaly_percentile`` of the global
-    per-frame score distribution.
-    """
+    """Robust per-dim center/scale + percentile frame-score thresholds."""
 
     source: str
     n_frames: int
@@ -274,12 +253,7 @@ def run_local(dataset_root: str | Path, thresholds: SignalGates, calibration: Ca
 
 # --- spark engine (production / scale) -------------------------------------
 def run_spark(dataset_root: str | Path, thresholds: SignalGates, calibration: Calibration) -> GateReport:
-    """Spark local-mode engine. Requires Java + pyspark; verified on Ubuntu (M6).
-
-    Groups the aggregated data parquet by episode_index and runs the *same* pure core
-    per group via applyInPandas, so results match run_local exactly. The (small)
-    calibration + thresholds are captured in the closure and shipped to the workers.
-    """
+    """Spark local-mode engine; groups the data parquet by episode_index and runs the same pure core per group via applyInPandas, so results match run_local."""
     if not os.getenv("JAVA_HOME") and not shutil.which("java"):
         raise RuntimeError(
             "the 'spark' engine needs a Java runtime (JAVA_HOME unset and `java` not on PATH). "

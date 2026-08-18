@@ -1,13 +1,4 @@
-"""Catalog writer — persist one dataset-version row.
-
-Two backends, mirroring the signal-gate engine split:
-  - ``postgres`` — the stack's `catalog` schema (psycopg; DSN from env). Used by
-    ``make demo`` on the Docker/Ubuntu runtime.
-  - ``sqlite``   — a stdlib local file (``data/catalog.db``), for dev/CI where Postgres
-    is not up. Same columns as postgres/init/01_catalog_schema.sql.
-
-See CLAUDE_CODE_BRIEF.md §6.3 and docs/01-conception.md §4.4.
-"""
+"""Persist one dataset-version row to the catalog (postgres or sqlite)."""
 
 from __future__ import annotations
 
@@ -24,13 +15,7 @@ _ENV_LOADED = False
 
 
 def _load_dotenv_once() -> None:
-    """Populate ``os.environ`` from a project-root ``.env`` without overriding existing vars.
-
-    Zero-dependency, mirroring ``python-dotenv``'s ``override=False`` semantics: real
-    environment variables and inline overrides (e.g. ``POSTGRES_HOST=localhost make demo``)
-    always win over the file. This is why a host-run ``make demo CATALOG=postgres`` picks up
-    the DB password from ``.env`` without any manual exporting.
-    """
+    """Load a project-root .env into os.environ without overriding existing vars."""
     global _ENV_LOADED
     if _ENV_LOADED:
         return
@@ -70,8 +55,6 @@ CREATE TABLE IF NOT EXISTS dataset_version (
 
 
 class CatalogWriter:
-    """Insert dataset-version rows into the catalog (postgres or sqlite)."""
-
     def __init__(self, backend: str = "sqlite", dsn: str | None = None) -> None:
         self.backend = backend
         self.dsn = dsn
@@ -110,9 +93,9 @@ class CatalogWriter:
             con.close()
 
     def _postgres(self, row: dict) -> None:
-        import psycopg  # lazy — only needed for the postgres backend
+        import psycopg
 
-        _load_dotenv_once()  # so host runs pick up POSTGRES_* from .env automatically
+        _load_dotenv_once()
         dsn = self.dsn or (
             f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
             f"port={os.getenv('POSTGRES_PORT', '5432')} "
@@ -121,7 +104,6 @@ class CatalogWriter:
             f"password={os.getenv('POSTGRES_PASSWORD', '')}"
         )
         cols = ", ".join(COLUMNS)
-        # task_distribution is text here; cast to jsonb for the JSONB column.
         values = ", ".join("%s::jsonb" if c == "task_distribution" else "%s" for c in COLUMNS)
         updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUMNS if c != "dataset_version")
         sql = (

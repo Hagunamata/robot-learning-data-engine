@@ -1,16 +1,4 @@
-"""Synthetic episode augmenter (M5) — evolved from the prior repo's data_generator/.
-
-Mints **LeRobot v3.0-format** episodes for under-represented tasks and writes them as a
-normal raw dataset so they pass through the *same* schema + signal gates as real data
-(no laxer path). Generation is procedural (smooth, in-distribution trajectories) — no
-learned generative model in v1. Episodes are labelled synthetic in the catalog notes.
-
-Smoothness + amplitudes are drawn within the calibration's action center/scale so the
-episodes sit inside the real signal distribution and clear the gates; the point is to
-*balance the task distribution*, not to imitate real robot behaviour.
-
-See docs/01-conception.md §4.5.
-"""
+"""Synthetic episode augmenter: mints LeRobot v3.0 episodes for under-represented tasks, passed through the same gates as real data."""
 
 from __future__ import annotations
 
@@ -54,11 +42,7 @@ def augment_dataset(
     episode_len_range: tuple[int, int] = (120, 260),
     seed: int = 0,
 ) -> dict:
-    """Generate synthetic episodes for under-represented tasks in `base_curated`.
-
-    Writes a v3.0 LeRobot dataset to `out_root` (data parquet + copied/patched meta),
-    ready to be validated by the same gates. Returns a summary dict.
-    """
+    """Generate synthetic episodes for under-represented tasks in `base_curated`, written as a v3.0 LeRobot dataset to `out_root`."""
     base = Path(base_curated)
     out_root = Path(out_root)
     info = json.loads((base / "meta" / "info.json").read_text(encoding="utf-8"))
@@ -67,14 +51,12 @@ def augment_dataset(
     ds = int(features.get("observation.state", {}).get("shape", [7])[0])
     da = int(features.get("action", {}).get("shape", [7])[0])
 
-    # task <-> index maps from the base tasks table (robust to schema variants).
     from catalog.record import compute_task_distribution, read_task_map  # local import avoids a cycle
 
     task_to_idx = {name: idx for idx, name in read_task_map(base / "meta" / "tasks.parquet").items()}
     dist = compute_task_distribution(base)
     deficits = under_represented_tasks(dist, target_per_task)
 
-    # Episode indices continue after the base dataset's max.
     base_table = pa.concat_tables([pq.read_table(f) for f in sorted((base / "data").rglob("*.parquet"))])
     next_ep = (max(base_table.column("episode_index").to_pylist()) + 1) if base_table.num_rows else 0
 
@@ -123,7 +105,6 @@ def augment_dataset(
         )
         pq.write_table(table, out_root / "data" / "chunk-000" / "file-000.parquet")
 
-    # Meta: patched info.json (only the features/fps matter for the gates) + tasks copy.
     info["total_episodes"] = generated
     info["total_frames"] = len(eps)
     (out_root / "meta" / "info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")

@@ -1,8 +1,4 @@
-"""Build a catalog record (one dataset version) from a curated dataset on disk.
-
-Pure computation — reads the curated LeRobot dataset and a gate report, produces the
-row defined in CLAUDE_CODE_BRIEF.md §6.3. No DB here (that is `writer.py`).
-"""
+"""Build a catalog record (one dataset version) from a curated dataset on disk."""
 
 from __future__ import annotations
 
@@ -24,7 +20,7 @@ class CatalogRecord:
     license: Optional[str]
     episode_count: int
     frame_count: int
-    task_distribution: dict[str, int]   # task -> episode count
+    task_distribution: dict[str, int]
     gate_pass_rate: Optional[float]
     bytes_on_disk: int
     git_commit: Optional[str]
@@ -45,12 +41,7 @@ def _data_table(curated_root: Path) -> Optional[pa.Table]:
 
 
 def read_task_map(tasks_path: str | Path) -> dict[int, str]:
-    """task_index -> task string, robust to LeRobot's tasks.parquet variants.
-
-    v3.0 lerobot/droid_100 stores the string as the pandas index column
-    ``__index_level_0__`` with a ``task_index`` column; other exports use a ``task``
-    column. Handle whichever string column is present.
-    """
+    """task_index -> task string. v3.0 stores it as index col ``__index_level_0__``; other exports use a ``task`` column."""
     tasks_path = Path(tasks_path)
     if not tasks_path.exists():
         return {}
