@@ -265,10 +265,11 @@ cat data/manifest/v0.1.0-droid-slice.json
 ## Step 9 — The containerised stack (Postgres catalog, optional Spark, Airflow)
 
 ```bash
-cp .env.example .env         # review values
+cp .env.example .env         # review values (POSTGRES_HOST=localhost for host runs)
 make up                      # starts Postgres; catalog schema applied from postgres/init/
-make demo SOURCE=droid-100 ENGINE=spark CATALOG=postgres
-psql "postgresql://rlde:change_me@localhost:5432/robot_learning" \
+make demo SOURCE=droid-100 ENGINE=local CATALOG=postgres
+docker exec robot-learning-data-engine-postgres-1 \
+  psql -U rlde -d robot_learning \
   -c "SELECT dataset_version, episode_count, task_distribution FROM catalog.dataset_version;"
 make down
 ```
@@ -277,6 +278,20 @@ make down
 (same content as the sqlite run). The Airflow DAG (`airflow/dags/robot_learning_dag.py`)
 runs the same stage callables — trigger it from the Airflow UI once Airflow is added to
 the compose stack.
+
+> **Port 5432 must be free.** `make up` fails if another stack already binds 5432 (a common
+> one: a sibling project's Postgres). If `docker compose up` errors on the port, stop the
+> other stack (`docker compose -p <other-project> down`) or set `POSTGRES_PORT` in `.env` to
+> a free port. A registry `no such host` / `failed to fetch token` error is a transient DNS
+> blip — just retry.
+>
+> **`make demo` connects from the host,** so `POSTGRES_HOST` must be `localhost` (the
+> default in `.env.example`); the pipeline auto-loads `.env`, so no `POSTGRES_*` need to be
+> exported by hand. Use `POSTGRES_HOST=postgres` only when running inside the compose network.
+>
+> **`ENGINE=spark` needs a local JDK (Java 17+).** If PySpark fails with
+> `JAVA_GATEWAY_EXITED`, either install a JRE (`sudo apt install openjdk-17-jre-headless`)
+> or use `ENGINE=local` — the local and Spark gate engines produce identical catalog rows.
 
 - [ ] working? ______
 

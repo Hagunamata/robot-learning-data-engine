@@ -20,6 +20,31 @@ from acquisition.logging_utils import log_event
 
 from .record import CatalogRecord
 
+_ENV_LOADED = False
+
+
+def _load_dotenv_once() -> None:
+    """Populate ``os.environ`` from a project-root ``.env`` without overriding existing vars.
+
+    Zero-dependency, mirroring ``python-dotenv``'s ``override=False`` semantics: real
+    environment variables and inline overrides (e.g. ``POSTGRES_HOST=localhost make demo``)
+    always win over the file. This is why a host-run ``make demo CATALOG=postgres`` picks up
+    the DB password from ``.env`` without any manual exporting.
+    """
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    _ENV_LOADED = True
+    for candidate in (Path(".env"), Path(__file__).resolve().parent.parent / ".env"):
+        if candidate.is_file():
+            for line in candidate.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+            break
+
 COLUMNS = [
     "dataset_version", "source_id", "hf_repo", "license", "episode_count",
     "frame_count", "task_distribution", "gate_pass_rate", "bytes_on_disk",
@@ -87,8 +112,9 @@ class CatalogWriter:
     def _postgres(self, row: dict) -> None:
         import psycopg  # lazy — only needed for the postgres backend
 
+        _load_dotenv_once()  # so host runs pick up POSTGRES_* from .env automatically
         dsn = self.dsn or (
-            f"host={os.getenv('POSTGRES_HOST', 'postgres')} "
+            f"host={os.getenv('POSTGRES_HOST', 'localhost')} "
             f"port={os.getenv('POSTGRES_PORT', '5432')} "
             f"dbname={os.getenv('POSTGRES_DB', 'robot_learning')} "
             f"user={os.getenv('POSTGRES_USER', 'rlde')} "

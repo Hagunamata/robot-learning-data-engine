@@ -41,6 +41,8 @@ def load_catalog() -> pd.DataFrame:
     if backend == "postgres":
         import psycopg
 
+        from catalog.writer import _load_dotenv_once
+        _load_dotenv_once()  # pick up POSTGRES_* from .env for host runs
         dsn = os.getenv("RLDE_CATALOG_DSN") or (
             f"host={os.getenv('POSTGRES_HOST','localhost')} port={os.getenv('POSTGRES_PORT','5432')} "
             f"dbname={os.getenv('POSTGRES_DB','robot_learning')} user={os.getenv('POSTGRES_USER','rlde')} "
