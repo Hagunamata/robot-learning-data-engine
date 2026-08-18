@@ -48,7 +48,7 @@ curation, catalog, augmenter, full pipeline, and the scale invariant.
 make test
 ```
 
-**Expect:** `33 passed`.
+**Expect:** `36 passed`.
 
 - [ ] working? ______
 
@@ -326,7 +326,7 @@ the compose stack.
 
 | Step | What | Result | Notes / issues |
 |------|------|--------|----------------|
-| 0 | `make test` (33 passed) | | |
+| 0 | `make test` (36 passed) | | |
 | 1 | synthetic invariant | | |
 | 2 | acquire dry-run | | |
 | 3 | acquire droid-100 (~0.43 GB) | | |

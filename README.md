@@ -8,7 +8,7 @@
 > Second of a two-part portfolio arc. Sibling project:
 > [dark-factory-data-platform](https://github.com/Hagunamata/dark-factory-data-platform).
 
-> **Status:** end-to-end pipeline implemented and tested (33 tests). Runs fully locally
+> **Status:** end-to-end pipeline implemented and tested (36 tests). Runs fully locally
 > (`make demo ENGINE=local CATALOG=sqlite`, no server or JVM) or on the Docker stack.
 > Read [docs/01-conception.md](docs/01-conception.md) for the design and reasoning,
 > [docs/02-development.md](docs/02-development.md) for how it was built, and
@@ -76,7 +76,7 @@ cd robot-learning-data-engine
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-make test                                   # 33 tests, no network/JVM/DB
+make test                                   # 36 tests, no network/JVM/DB
 make scale                                  # synthetic process-and-evict proof
 make demo ENGINE=local CATALOG=sqlite       # full pipeline on DROID-100, no server
 make report                                 # Streamlit dashboard (reads the catalog)
