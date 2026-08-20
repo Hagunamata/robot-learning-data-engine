@@ -1,4 +1,4 @@
-"""Tests for the M4 signal gates + curation/eviction (no JVM; local engine).
+"""Tests for the signal gates + curation/eviction (no JVM; local engine).
 
 The pure metric core and the `local` engine are exercised directly. The `spark` engine
 shares the identical core and is verified on Ubuntu (needs Java + pyspark).

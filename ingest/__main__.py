@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
         help="signal-gate engine: 'spark' (scale) or 'local' (dev/CI, no JVM)",
     )
     parser.add_argument(
-        "--schema-only", action="store_true", help="stop after the M3 schema gate"
+        "--schema-only", action="store_true", help="stop after the schema gate"
     )
     args = parser.parse_args(argv)
 

@@ -1,6 +1,6 @@
 """Smoke test for the storage guard (no network, stdlib only).
 
-Exercises the core M2 invariant: the guard measures real on-disk usage, refuses an
+Exercises the core invariant: the guard measures real on-disk usage, refuses an
 admission that would exceed the budget, and frees bytes on eviction. Run with:
 
     python -m pytest tests/test_storage_guard.py

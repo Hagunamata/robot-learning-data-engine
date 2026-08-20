@@ -1,15 +1,13 @@
-# Source manifest + storage budget.  (M1 — human-owned values, verified against cards.)
+# Source manifest + storage budget. Values verified against the dataset cards.
 #
 # Verified 2026-07-22 against the live Hugging Face sources (cards + meta/info.json):
 #   - lerobot/droid_100            -> license MIT       ; codebase_version v3.0
 #         (info.json is authoritative; the card metadata mislabels it v2.0)
-#   - IPEC-COMMUNITY/droid_lerobot -> license Apache-2.0; codebase_version confirmed at M6 (detected at runtime)
-# Per CLAUDE_CODE_BRIEF.md §2.3 we cite the OFFICIAL DROID basis (CC-BY 4.0) as
-# `license` and record each mirror's stated license in `license_mirror_stated`.
-# Neither mirror is non-commercial (no CC-BY-NC flag needed).
+#   - IPEC-COMMUNITY/droid_lerobot -> license Apache-2.0; codebase_version v2.0 (detected at runtime)
+# We cite the official DROID basis (CC-BY 4.0) as `license` and record each mirror's
+# stated license in `license_mirror_stated`. Neither mirror is non-commercial.
 # NOTE: droid_100 is v3.0 -> data/videos are AGGREGATED (many episodes per file), so the
-# raw acquisition/eviction unit is the FILE, not the episode. Design record: docs/02-development.md (M2).
-# See docs/01-conception.md §2.
+# raw acquisition/eviction unit is the FILE, not the episode.
 
 storage_budget_gb: 25             # low on purpose for the scale demo; raise for a full run
 data_root: ./data
@@ -27,7 +25,7 @@ sources:
   - id: droid-slice
     role: scale                   # bounded slice to prove the storage-aware path
     hf_repo: IPEC-COMMUNITY/droid_lerobot
-    codebase_version: v2.0        # verified from meta/info.json at M6 (2026-08-18); v2.0 path templates use episode_chunk/episode_index
+    codebase_version: v2.0        # verified from meta/info.json (2026-08-18); v2.0 path templates use episode_chunk/episode_index
     max_episodes: 5000            # ~90 GB; the 25 GB guard is the real ceiling
     license: CC-BY-4.0            # basis: official DROID release
     license_mirror_stated: Apache-2.0  # verified on IPEC-COMMUNITY/droid_lerobot card (2026-07-22)

@@ -126,7 +126,7 @@ def run_validation(
     gates: QualityGates | None = None,
     engine: str = "spark",
 ) -> ValidationResult:
-    """Full validation stage: schema (M3) -> signal gates -> curate -> evict raw (M4)."""
+    """Full validation stage: schema -> signal gates -> curate -> evict raw."""
     gates = gates or load_quality_gates()
     root = Path(data_root)
 

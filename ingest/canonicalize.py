@@ -77,7 +77,7 @@ def ingest_source(
     )
 
     if result.passed:
-        log_event("ingest_ready", source=source_id, note="passed schema gate; awaits signal gates (M4)")
+        log_event("ingest_ready", source=source_id, note="passed schema gate; awaits signal gates")
         return IngestResult(source_id, True, result.codebase_version, [], "ready")
 
     if gates.on_fail == "drop":

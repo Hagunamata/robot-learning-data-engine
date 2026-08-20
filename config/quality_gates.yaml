@@ -1,13 +1,12 @@
-# Validation thresholds for the batch quality gates.  (M1 — human-owned values.)
+# Validation thresholds for the batch quality gates.
 #
 # Feature keys verified 2026-07-22 against lerobot/droid_100 meta/info.json (v3.0):
 #   observation.state (7-d f32), action (7-d f32),
 #   observation.images.{exterior_image_1_left, exterior_image_2_left, wrist_image_left}.
 # NOTE: there is NO `language_instruction` column. The language instruction is a
 #   per-frame `task_index` (int) resolved to a string via meta/tasks.parquet. The
-#   annotation gate checks task presence via task_index -> tasks lookup at M3.
-# Signal thresholds are DRAFT until the calibration pass over droid-100.
-# See docs/01-conception.md §4.2/§4.3.
+#   annotation gate checks task presence via task_index -> tasks lookup.
+# Signal thresholds are provisional until the calibration pass over droid-100.
 
 schema:
   detect_codebase_version: true   # branch v2.0 (flat) vs v3.0 (split keys)
@@ -21,14 +20,14 @@ schema:
     - observation.images.wrist_image_left
 
 signal:
-  # Robust percentile + anomalous-frame-fraction gate (M4 decision A; see
-  # docs/02-development.md M4). Naive mean+kσ z-scores were too aggressive on real
-  # DROID jerk (99/100 failed) because jerk is near-zero-peaked. Instead: calibrate a
+  # Robust percentile + anomalous-frame-fraction gate. Naive mean+kσ z-scores were too
+  # aggressive on real DROID jerk (99/100 failed) because jerk is near-zero-peaked.
+  # Instead: calibrate a
   # per-signal frame-score threshold at `anomaly_percentile` over `calibrate_from`,
   # then fail an episode only if >`max_anomalous_frame_ratio` of its frames exceed it.
   calibrate_from: droid-100       # source profiled to set the score thresholds
-  anomaly_percentile: 99.9        # DRAFT — per-frame score threshold percentile
-  max_anomalous_frame_ratio: 0.01 # DRAFT — fail if >1% of frames are anomalous
+  anomaly_percentile: 99.9        # per-frame score threshold percentile
+  max_anomalous_frame_ratio: 0.01 # fail if >1% of frames are anomalous
   max_missing_frame_ratio: 0.02
 
 annotation:

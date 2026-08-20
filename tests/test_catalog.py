@@ -1,4 +1,4 @@
-"""Tests for the M5 catalog record builder + sqlite writer (no Postgres needed)."""
+"""Tests for the catalog record builder + sqlite writer (no Postgres needed)."""
 
 from __future__ import annotations
 

@@ -1,6 +1,5 @@
 -- Catalog schema — one row per published dataset version.
--- DRAFT (M0): columns follow CLAUDE_CODE_BRIEF.md §6.3. Applied on first `make up`
--- once Postgres is wired in (M5). Reused pattern from the prior repo's postgres/init.
+-- Applied on first `make up`, once Postgres is running.
 
 CREATE SCHEMA IF NOT EXISTS catalog;
 

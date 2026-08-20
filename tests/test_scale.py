@@ -1,4 +1,4 @@
-"""Tests for the M6 scale runner — the measured process-and-evict invariant + resume.
+"""Tests for the scale runner — the measured process-and-evict invariant + resume.
 
 Seeded synthetic multi-file source; network-free and deterministic.
 """

@@ -1,4 +1,4 @@
-"""End-to-end pipeline test (M5): acquire(skip) -> validate -> catalog -> augment ->
+"""End-to-end pipeline test: acquire(skip) -> validate -> catalog -> augment ->
 catalog, via the local engine + sqlite catalog. No network, no JVM, no Postgres.
 """
 

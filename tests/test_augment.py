@@ -1,4 +1,4 @@
-"""Tests for the M5 synthetic augmenter (no network, no JVM)."""
+"""Tests for the synthetic augmenter (no network, no JVM)."""
 
 from __future__ import annotations
 

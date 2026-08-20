@@ -1,4 +1,4 @@
-# --- Datasets: NEVER commit (see CLAUDE_CODE_BRIEF.md §2) ---
+# --- Datasets: never commit ---
 # All acquired/curated/quarantined data is gitignored. Keep only the directory
 # skeleton (.gitkeep) and any small, deliberately-committed sample episodes.
 /data/**

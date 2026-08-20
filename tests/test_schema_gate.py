@@ -1,4 +1,4 @@
-"""Tests for the M3 schema gate + canonical-ingest quarantine (no network).
+"""Tests for the schema gate + canonical-ingest quarantine (no network).
 
 Builds tiny LeRobot v3.0-shaped fixtures with PyArrow: `meta/info.json` (features),
 a `data/chunk-000/file-000.parquet` of low-dim columns, `meta/tasks.parquet`, and a
@@ -134,7 +134,7 @@ def test_ingest_ready_on_pass(tmp_path: Path) -> None:
     build_dataset(tmp_path / "raw" / "droid-100")
     res = ingest_source("droid-100", data_root=tmp_path, gates=make_gates())
     assert res.action == "ready" and res.passed
-    assert (tmp_path / "raw" / "droid-100").exists()  # left in place for M4
+    assert (tmp_path / "raw" / "droid-100").exists()  # left in place for the signal-gate stage
 
 
 def test_ingest_quarantines_on_fail(tmp_path: Path) -> None:

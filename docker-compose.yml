@@ -1,8 +1,7 @@
 # Robot-Learning Data Engine — service topology.
 #
-# Postgres (the catalog) is live as of M5; Airflow/ELK/Kibana are wired in M6 (dashboard)
-# and are named here as commented placeholders so the shape of the stack is legible.
-# See docs/01-conception.md §3. Deliberately NO Kafka — sources are pull-based files (§6).
+# Postgres (the catalog) is live; Airflow/ELK/Kibana are named below as commented
+# placeholders so the shape of the stack is legible. No Kafka — sources are pull-based files.
 #
 # `make demo` runs the pipeline directly and does not require this stack; it only needs
 # Postgres if you choose the postgres catalog backend (make demo CATALOG=postgres).
@@ -25,11 +24,11 @@ services:
       timeout: 5s
       retries: 5
 
-#   airflow:         # LocalExecutor; DAG from ./airflow/dags                 [M6]
-#   spark:           # local mode; jobs from ./spark/jobs                     [M6]
-#   elasticsearch:   # ELK — log store                                       [M6]
-#   logstash:        # ships structured stdout; pipeline in ./elk/logstash   [M6]
-#   kibana:          # log/quality views (OR a Streamlit svc)  [M6, DECISION] #
+#   airflow:         # LocalExecutor; DAG from ./airflow/dags
+#   spark:           # local mode; jobs from ./spark/jobs
+#   elasticsearch:   # ELK — log store
+#   logstash:        # ships structured stdout; pipeline in ./elk/logstash
+#   kibana:          # log/quality views
 
 volumes:
   pg-data:
